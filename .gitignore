@@ -1,0 +1,15 @@
+ugpy/EMNIST/
+
+data/
+
+ugpy/scratch_code/
+
+ugpy/wandb/
+
+ugpy/__pycache__/
+
+.idea/
+
+ugpy/synspy/analyze/__pycache__/
+
+ugpy/synspy/__pycache__/
