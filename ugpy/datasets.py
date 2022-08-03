@@ -8,8 +8,8 @@ from mpl_toolkits.axes_grid1 import ImageGrid
 import pytorch_lightning as pl
 
 # local imports
-from loader import load_data
-from preprocess import Slices, roi_to_centroids
+from loader import load_data, load_image
+from preprocess import Slices, roi_to_centroids, split_to_rois
 from loader import load_centroids, load_labels, load_image, drop_unsegmented
 from splitter import train_test_split
 
@@ -49,14 +49,13 @@ class TwoSlicesDataset(Dataset):
 
         self.mean = np.mean(img)
         self.std = np.std(img)
-        self.examples_idx = torch.as_tensor(self.get_examples(labels), dtype=torch.long)
 
         self.centroids = centroids
-
         self.imgs1, self.imgs2 = self.get_slices(img, side)
 
         if labels is not None:
-            self.frac1 = np.sum(labels)/len(labels)
+            self.examples_idx = torch.as_tensor(self.get_examples(labels), dtype=torch.long)
+            self.frac1 = np.sum(labels) / len(labels)
             self.labels = torch.as_tensor(labels, dtype=self.label_dtype)
         else:
             self.labels = None
@@ -76,8 +75,9 @@ class TwoSlicesDataset(Dataset):
         slicer_yx = Slices([1, side, side])
         slicer_zy = Slices([side, side, 1])
 
-        imgs1 = slicer_yx.crop(self.centroids, img)
-        imgs2 = slicer_zy.crop(self.centroids, img)
+        # TODO : add checker that all are croppable
+        imgs1 = slicer_yx.crop_numba(self.centroids, img)
+        imgs2 = slicer_zy.crop_numba(self.centroids, img)
 
         imgs1 = self.standardize(imgs1)
         imgs2 = self.standardize(imgs2)
@@ -101,7 +101,9 @@ class TwoSlicesDataset(Dataset):
         """
         Creates a dataset from a roi : where each pixel in the roi is transformed into a centroid
         """
+        print(f"Received rois: {rois}")
         centroids = roi_to_centroids(rois)
+        print(f"getting {len(centroids)} centroids")
         return cls(img, side, centroids)
 
     def __getitem__(self, index):
@@ -111,7 +113,7 @@ class TwoSlicesDataset(Dataset):
         img2 = self.imgs2[index][None, :]
 
         if self.labels is None:
-            return img1, img2
+            return (img1, img2)
         else:
             return (img1, img2), self.labels[index]
 
@@ -203,7 +205,7 @@ class TwoSlicesDataModule(pl.LightningDataModule):
             val_datasets.append(TwoSlicesDataset(img, side, centroids_val, labels=labels_val))
         self.train_dataset = ConcatDataset(train_datasets)
         self.val_dataset = ConcatDataset(val_datasets)
-        self.frac1_train = num1_train/len(self.train_dataset)
+        self.frac1_train = num1_train / len(self.train_dataset)
         self.frac1_val = num1_val / len(self.val_dataset)
 
         datasets = []
@@ -215,7 +217,6 @@ class TwoSlicesDataModule(pl.LightningDataModule):
             datasets.append(TwoSlicesDataset(img, side, centroids, labels=labels))
         self.test_dataset = ConcatDataset(datasets)
         self.frac1_test = num1_test / len(self.test_dataset)
-
 
     def setup(self, stage=None):
         """
@@ -244,6 +245,52 @@ class TwoSlicesDataModule(pl.LightningDataModule):
     def test_dataloader(self):
         return DataLoader(self.test_dataset, batch_size=self.batch_size,
                           num_workers=self.num_workers, pin_memory=self.pin_memory)
+
+
+class TwoSlicesProbMapModule(pl.LightningDataModule):
+    """
+    Prepares data for prediction.
+    """
+
+    def __init__(self, image_filename, rois, batch_size, num_workers=1, pin_memory=True):
+        super().__init__()
+
+        self.batch_size = batch_size
+
+        self.num_classes = 2
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+
+        self.rois = rois
+        self.image = image_filename
+
+    def prepare_data(self):
+        """
+        prepares the data to be predicted
+        """
+        side = 15
+
+        img = load_image(self.image)
+        self.pred_dataset = TwoSlicesDataset.from_rois(img, side, self.rois)
+        print("Done loading rois")
+
+    def predict_dataloader(self):
+        return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=True,
+                          num_workers=self.num_workers, pin_memory=self.pin_memory)
+
+
+def check_probmap_module():
+    img_file = "D:/Code/repos/UGPy/data/predict/prob_map/1-20FJ.tif"
+    # use chunks to draw probability map in pieces
+    zyx_chunks = [5, 5, 5]
+    rois = split_to_rois(img_file, zyx_chunks)
+
+    data_module = TwoSlicesProbMapModule(img_file, [rois[0]], 500)
+    data_module.prepare_data()
+    dataloader = data_module.predict_dataloader()
+    (img1, img2) = next(iter(dataloader))
+    print(img1.shape)
+    print(img2.shape)
 
 
 def check_combo_dataset():
@@ -344,4 +391,4 @@ def check_examples():
 
 
 if __name__ == "__main__":
-    check_examples()
+    check_probmap_module()

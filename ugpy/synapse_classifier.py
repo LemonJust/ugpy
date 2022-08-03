@@ -1,6 +1,8 @@
 """
 Structure from https://github.com/Lightning-AI/lightning/issues/9252
 """
+import glob
+
 import torch
 from torch import nn
 from torchmetrics import MetricCollection, F1Score, Precision, Recall, MeanMetric, Metric
@@ -12,8 +14,9 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 import wandb
 
-from datasets import TwoSlicesDataModule
+from datasets import TwoSlicesDataModule, TwoSlicesProbMapModule
 from models import TwoBranchConv2d
+from preprocess import split_to_rois
 
 
 class SynapseClassifier(LightningModule):
@@ -25,7 +28,7 @@ class SynapseClassifier(LightningModule):
     def __init__(
             self,
             model: nn.Module,
-            criterion: nn.Module,
+            criterion: nn.Module = None,
             lr: float = 0.0002
     ):
         """
@@ -74,6 +77,12 @@ class SynapseClassifier(LightningModule):
 
     def forward(self, x):
         return self.model(x)
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        x = batch
+        outs = self.model(x)
+        prob = torch.sigmoid(outs)
+        return prob
 
     def training_step(self, batch, batch_idx):
         return self.step(batch, batch_idx, self.train_metrics)
@@ -195,10 +204,49 @@ def train_and_test_with_logger(project_name, seed, max_epochs, pos_weight, batch
     wandb.finish()
 
 
+def predict(project_name):
+    wandb_logger = WandbLogger(project=project_name, job_type='predict')
+
+    img_file = "D:/Code/repos/UGPy/data/predict/prob_map/1-20FJ.tif"
+    # use chunks to draw probability map in pieces
+    zyx_chunks = [5, 5, 5]
+    zyx_padding = [10, 100, 100]
+    rois = split_to_rois(img_file, zyx_chunks, zyx_padding)
+    num_workers = 0
+    batch_size = 50000
+    data_module = TwoSlicesProbMapModule(img_file, [rois[0]], batch_size, num_workers=num_workers)
+
+    # set up the model
+    # # TODO : make it so that I don't need to set up the loss ?
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(5), reduction='mean')
+    model = SynapseClassifier(TwoBranchConv2d(), criterion, lr=0.0002)
+
+    # # get the check point
+    # # TODO : try wandb restore
+    run_id = "3m51q4ne"
+    checkpoint_path = glob.glob("D:/Code/repos/UGPy/ugpy/wandb/*3m51q4ne/files/*.ckpt")[0]
+    # glob.glob("D:/Code/repos/UGPy/ugpy/wandb/*3m51q4ne/files/*.ckpt")
+    print(f"Using checkpoint : {checkpoint_path}")
+
+    # Initialize a trainer
+    trainer = pl.Trainer(max_epochs=1,
+                         accelerator='gpu', devices=1,
+                         logger=wandb_logger)
+    prediction = trainer.predict(datamodule=data_module, ckpt_path=checkpoint_path)
+
+    wandb.config["batch_size"] = batch_size
+    wandb.config["num_pred"] = len(data_module.pred_dataset)
+    wandb.config["num_workers"] = num_workers
+
+    # close wandb run
+    wandb.finish()
+
+
 if __name__ == "__main__":
-    seed = 222
-    max_epochs = 10
-    pos_weight = 5
-    batch_size = 500
-    project_name = 'SynapseClassifier'
-    train_and_test_with_logger(project_name, seed, max_epochs, pos_weight, batch_size)
+    # seed = 222
+    # max_epochs = 20
+    # pos_weight = 5
+    # batch_size = 500
+    project_name = 'UGPy-SynapseClassifier'
+    # train_and_test_with_logger(project_name, seed, max_epochs, pos_weight, batch_size)
+    predict(project_name)

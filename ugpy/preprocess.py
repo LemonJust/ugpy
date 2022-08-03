@@ -1,4 +1,6 @@
 import numpy as np
+from tifffile import TiffFile
+from numba import njit
 
 
 class Cropper:
@@ -44,6 +46,29 @@ class Cropper:
             return np.squeeze(imgs), crop_status
         else:
             return np.squeeze(imgs)
+
+    def crop_numba(self, centroids, img):
+        """
+        crops without checking if the crop is possible.
+        But much-much aster than crop, but you need to be careful
+        """
+
+        @njit
+        def crop_numba_loop(centroids, img, imgs, half_shape_3d):
+            for i, centroid in enumerate(centroids):
+                start = centroid - half_shape_3d
+                end = centroid + half_shape_3d + 1
+                # check that crop is fully inside the image:
+                crop = img[start[0]:end[0], start[1]:end[1], start[2]:end[2]]
+                imgs[i, :] = crop
+
+                return imgs
+
+        n_centroids = centroids.shape[0]
+        imgs = np.zeros((n_centroids, self.shape_3d[0], self.shape_3d[1], self.shape_3d[2]))
+        half_shape_3d = self.shape_3d // 2
+        imgs = crop_numba_loop(centroids, img, imgs, half_shape_3d)
+        return np.squeeze(imgs)
 
     def get_cropable(self, centroids, img_shape, as_idx=False):
         """
@@ -146,20 +171,70 @@ def roi_to_centroids(rois):
     rois : list of dictionaries, each dict specifies a roi with keys: xmin, xmax, ymin, ymax, zmin, zmax
             list[dict]
     """
+
     def get_pixels_as_centroids(roi):
         """
         turns pixel into [z,y,x]
         roi: region for which to get the pixels
         """
-        z, y, x = np.meshgrid(np.arange(roi['zmin'], roi['zmax']),
-                              np.arange(roi['ymin'], roi['ymax']),
-                              np.arange(roi['xmin'], roi['xmax']))
+        z, y, x = np.meshgrid(np.arange(roi['zmin'], roi['zmax'], 1),
+                              np.arange(roi['ymin'], roi['ymax'], 1),
+                              np.arange(roi['xmin'], roi['xmax'], 1))
         return np.c_[z.flatten(), y.flatten(), x.flatten()]
 
-    centroids = np.empty((1, 3))
+    centroids = None
     for roi in rois:
-        centroids = np.append(centroids, get_pixels_as_centroids(roi), axis=0)
+        if centroids is None:
+            centroids = get_pixels_as_centroids(roi)
+        else:
+            centroids = np.append(centroids, get_pixels_as_centroids(roi), axis=0)
 
     return centroids.astype(int)
 
 
+def split_to_rois(img_file, zyx_chunks, zyx_padding):
+    """
+    Splits an image into a given number of rois in z, y, x
+    :param img_file: tif file to split
+    :param zyx_chunks: list with the number of splits in [z, y, x]
+    :param padding: how many pixels to leave uncropped on each side [z, y, x]
+    :return: list of dictionaries, each dict specifies a roi with keys: xmin, xmax, ymin, ymax, zmin, zmax
+    """
+
+    def get_axis_breaks(axis_size, n, axis_padding):
+        """
+        Finds the locations on the axis at which to break it
+        """
+        chunk_size = np.ceil((axis_size - axis_padding * 2) / n).astype(int)
+        point = axis_padding
+        axis_breaks = []
+        while point < (axis_size - axis_padding):
+            axis_breaks.append(point)
+            point = point + chunk_size
+        axis_breaks.append(axis_size - axis_padding)
+        return axis_breaks
+
+    # get file info
+    stack = TiffFile(img_file, _multifile=False)
+    z_size = len(stack.pages)
+    page = stack.pages.get(0)
+    y_size, x_size = page.shape
+    stack.close()
+    # find how to break the axis
+    z_breaks = get_axis_breaks(z_size, zyx_chunks[0], zyx_padding[0])
+    y_breaks = get_axis_breaks(y_size, zyx_chunks[1], zyx_padding[1])
+    x_breaks = get_axis_breaks(x_size, zyx_chunks[2], zyx_padding[2])
+    # create the roi dictionaries from breaks
+    rois = []
+    for iz in range(len(z_breaks) - 1):
+        for iy in range(len(y_breaks) - 1):
+            for ix in range(len(x_breaks) - 1):
+                d = {"zmin": z_breaks[iz], "zmax": z_breaks[iz + 1],
+                     "ymin": y_breaks[iy], "ymax": y_breaks[iy + 1],
+                     "xmin": x_breaks[ix], "xmax": x_breaks[ix + 1]}
+                rois.append(d)
+    return rois
+
+
+if __name__ == "__main__":
+    pass
