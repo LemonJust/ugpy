@@ -47,7 +47,7 @@ class TwoSlicesDataset(Dataset):
         :param labels: binary labels for each centroid
         :type labels: numpy array or list
         """
-        print(f"Getting dataset")
+        print(f"Creating dataset")
         self.numba = numba
 
         self.mean = np.mean(img)
@@ -240,7 +240,6 @@ class TwoSlicesDataModule(pl.LightningDataModule):
             num1_train = 0
             num1_val = 0
             for roi_id in self.training_roi_ids:
-                print(roi_id)
                 centroids, labels, img = load_data(self.data_dir, roi_id)
                 # to ensure that the same proportion of each fish is present in the validation
                 # TODO : do I need to worry about the tp1 and tp2 of the same fish
@@ -250,7 +249,9 @@ class TwoSlicesDataModule(pl.LightningDataModule):
                                                                                             test_fraction=0.10)
                 num1_train = num1_train + np.sum(labels_train)
                 num1_val = num1_val + np.sum(labels_val)
+                print(f"Getting train data from {roi_id}")
                 train_datasets.append(TwoSlicesDataset(img, self.side, centroids_train, labels=labels_train))
+                print(f"Getting validation data from {roi_id}")
                 val_datasets.append(TwoSlicesDataset(img, self.side, centroids_val, labels=labels_val))
             self.train_dataset = ConcatDataset(train_datasets)
             self.val_dataset = ConcatDataset(val_datasets)
@@ -264,10 +265,10 @@ class TwoSlicesDataModule(pl.LightningDataModule):
             datasets = []
             num1_test = 0
             for roi_id in self.testing_roi_ids:
-                print(roi_id)
-                centroids, labels, img = load_data(data_dir, roi_id)
+                centroids, labels, img = load_data(self.data_dir, roi_id)
                 num1_test = num1_test + np.sum(labels)
-                datasets.append(TwoSlicesDataset(img, side, centroids, labels=labels))
+                print(f"Getting test data from {roi_id}")
+                datasets.append(TwoSlicesDataset(img, self.side, centroids, labels=labels))
             self.test_dataset = ConcatDataset(datasets)
             self.frac1_test = num1_test / len(self.test_dataset)
 
