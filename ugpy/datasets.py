@@ -15,6 +15,7 @@ from splitter import train_test_split
 
 # TODO : rewrite stuff from os.join to Path
 import os
+import warnings
 
 
 class TwoSlicesDataset(Dataset):
@@ -32,7 +33,7 @@ class TwoSlicesDataset(Dataset):
     # TODO : so what type should I use ?!?!
     label_dtype = torch.float32
 
-    def __init__(self, img, side, centroids, labels=None):
+    def __init__(self, img, side, centroids, labels=None, numba=True):
         """
         Creates a dataset that keeps two slices of size side x side for all the centroids,
          cropped  from the img at yx and zy orientation.
@@ -46,12 +47,13 @@ class TwoSlicesDataset(Dataset):
         :param labels: binary labels for each centroid
         :type labels: numpy array or list
         """
+        print(f"Getting dataset")
+        self.numba = numba
 
         self.mean = np.mean(img)
         self.std = np.std(img)
 
         self.centroids = centroids
-        self.imgs1, self.imgs2 = self.get_slices(img, side)
 
         if labels is not None:
             self.examples_idx = torch.as_tensor(self.get_examples(labels), dtype=torch.long)
@@ -59,6 +61,8 @@ class TwoSlicesDataset(Dataset):
             self.labels = torch.as_tensor(labels, dtype=self.label_dtype)
         else:
             self.labels = None
+
+        self.imgs1, self.imgs2 = self.get_slices(img, side)
 
     @staticmethod
     def get_examples(labels):
@@ -72,16 +76,41 @@ class TwoSlicesDataset(Dataset):
         return np.concatenate((label_1, label_0), axis=0)
 
     def get_slices(self, img, side):
+
+        # initialise slicer objects to make crops
         slicer_yx = Slices([1, side, side])
         slicer_zy = Slices([side, side, 1])
 
-        # TODO : add checker that all are croppable
-        imgs1 = slicer_yx.crop_numba(self.centroids, img)
-        imgs2 = slicer_zy.crop_numba(self.centroids, img)
+        # check which centroids can be cropped with the currect box size
+        cropable_yx = slicer_yx.get_cropable(self.centroids, img.shape)
+        cropable_zy = slicer_zy.get_cropable(self.centroids, img.shape)
+        cropable = np.logical_and(cropable_yx, cropable_zy)
+        prc_cropable = np.sum(cropable) * 100 / len(cropable)
+        print(f"Percent croppable: {prc_cropable}%")
 
+        # drop uncropable centroids if needed
+        if prc_cropable < 100:
+            warnings.warn(f"Dropped {np.sum(~cropable)} uncropable centroids")
+            self.centroids = self.centroids[cropable]
+            if self.labels is not None:
+                self.labels = self.labels[cropable]
+                warnings.warn(f"Dropped {np.sum(~cropable)} uncropable labels")
+
+
+        # crop
+        if self.numba:
+            # use acceleration by numba
+            imgs1 = slicer_yx.crop_numba(self.centroids, img)
+            imgs2 = slicer_zy.crop_numba(self.centroids, img)
+        else:
+            imgs1 = slicer_yx.crop(self.centroids, img)
+            imgs2 = slicer_zy.crop(self.centroids, img)
+
+        # apply normalisation
         imgs1 = self.standardize(imgs1)
         imgs2 = self.standardize(imgs2)
 
+        # make tensors
         # torch.as_tensor doesn't use memory to create a copy
         imgs1 = torch.as_tensor(imgs1, dtype=self.image_dtype)
         imgs2 = torch.as_tensor(imgs2, dtype=self.image_dtype)
@@ -111,7 +140,8 @@ class TwoSlicesDataset(Dataset):
         # (according to "index"), not the whole dataset
         img1 = self.imgs1[index][None, :]
         img2 = self.imgs2[index][None, :]
-
+        # TODO : if labels are not provided - returns only images
+        #  shold I make mock labels instead?
         if self.labels is None:
             return (img1, img2)
         else:
@@ -231,19 +261,17 @@ class TwoSlicesDataModule(pl.LightningDataModule):
         Nothing to do here for me because I already did everything in the prepare_data
         ( due to how my data is made of individual fish, I had to do it that way)
         """
-        # TODO : maybe split based on fish + label here and get a full_dataset in the prepare data ?
-        pass
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
                           num_workers=self.num_workers, pin_memory=self.pin_memory)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size,
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False,
                           num_workers=self.num_workers, pin_memory=self.pin_memory)
 
     def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size,
+        return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
                           num_workers=self.num_workers, pin_memory=self.pin_memory)
 
 
@@ -252,8 +280,11 @@ class TwoSlicesProbMapModule(pl.LightningDataModule):
     Prepares data for prediction.
     """
 
-    def __init__(self, image_filename, rois, batch_size, num_workers=1, pin_memory=True):
+    def __init__(self, rois, batch_size=None, img=None, image_filename=None, num_workers=1, pin_memory=True):
         super().__init__()
+
+        assert (img is not None) != (image_filename is not None), \
+            "img or image_filename need to be provided , but not both"
 
         self.batch_size = batch_size
 
@@ -262,20 +293,23 @@ class TwoSlicesProbMapModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
 
         self.rois = rois
-        self.image = image_filename
+        if img is None:
+            self.image = load_image(image_filename)
+        else:
+            self.image = img
 
     def prepare_data(self):
         """
         prepares the data to be predicted
         """
         side = 15
-
-        img = load_image(self.image)
-        self.pred_dataset = TwoSlicesDataset.from_rois(img, side, self.rois)
+        self.pred_dataset = TwoSlicesDataset.from_rois(self.image, side, self.rois)
+        if self.batch_size is None:
+            self.batch_size = len(self.pred_dataset)
         print("Done loading rois")
 
     def predict_dataloader(self):
-        return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=True,
+        return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=False,
                           num_workers=self.num_workers, pin_memory=self.pin_memory)
 
 

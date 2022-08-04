@@ -1,6 +1,7 @@
 import numpy as np
 from tifffile import TiffFile
 from numba import njit
+import scipy.ndimage as nd
 
 
 class Cropper:
@@ -61,8 +62,7 @@ class Cropper:
                 # check that crop is fully inside the image:
                 crop = img[start[0]:end[0], start[1]:end[1], start[2]:end[2]]
                 imgs[i, :] = crop
-
-                return imgs
+            return imgs
 
         n_centroids = centroids.shape[0]
         imgs = np.zeros((n_centroids, self.shape_3d[0], self.shape_3d[1], self.shape_3d[2]))
@@ -165,6 +165,110 @@ class Volumes(Cropper):
         pass
 
 
+class Image:
+    def __init__(self, resolution, filename=None, img=None, info=None, mask=None):
+        """
+        mask : dict with xmin, xmax, ymin, ymax, zmin, zmax optional
+        ( fields can be empty if don't need to crop the corresponding dimention).
+        """
+
+        assert filename is not None or img is not None, "Provide filename or img."
+        assert (filename is None) is not (img is None), "Provide exactly one of the following: filename or img."
+
+        self.filename = filename
+        self.resolution = np.array(resolution)
+        self.info = info
+
+        if img is None:
+            self.img = self.read_image()
+        else:
+            self.img = img
+
+        self.shape = self.img.shape
+
+        self.mask = mask
+        if self.mask is not None:
+            self.mask = self.crop(mask)
+
+        self.shape = self.img.shape
+
+    def read_image(self):
+        """
+        Reads image in ZYX order.
+        """""
+        img = tif.imread(self.filename)
+        return img
+
+    def crop(self, mask):
+        """
+        Crops an image: drops everything outside a rectangle mask (in pixels) and remembers the parameters of the crop.
+        mask : dict with xmin, xmax, ymin, ymax, zmin, zmax optional ( fields can be empty if don't need to crop there).
+        """
+
+        for key in ['xmin', 'xmax', 'ymin', 'ymax', 'zmin', 'zmax']:
+            if key not in mask:
+                mask[key] = None
+
+        self.img = self.img[
+                   mask['zmin']:mask['zmax'],
+                   mask['ymin']:mask['ymax'],
+                   mask['xmin']:mask['xmax']
+                   ]
+
+        self.shape = self.img.shape
+
+        return mask
+
+    def blur(self, sigma):
+        """
+        sigma : gaussian filter parameters, ZYX order , in pixels
+        (from scipy : scalar or sequence of scalars Standard deviation for Gaussian kernel. The
+        standard deviations of the Gaussian filter are given for each axis as a sequence, or as a single number,
+        in which case it is equal for all axes.)
+        """
+        img = nd.gaussian_filter(self.img, sigma)
+        return Image(self.resolution, img=img, info=f"Blurred {self.filename}")
+
+    def dog(self, sigma1, sigma2):
+        """
+        sigma1, sigma2 : gaussian filter parameters, ZYX order , in pixels
+        (from scipy : scalar or sequence of scalars Standard deviation for Gaussian kernel. The
+        standard deviations of the Gaussian filter are given for each axis as a sequence, or as a single number,
+        in which case it is equal for all axes.)
+        """
+        img = nd.gaussian_filter(self.img, sigma2) - nd.gaussian_filter(self.img, sigma1)
+        return Image(self.resolution, img=img, info=f"DoG {self.filename}")
+
+    def threshold(self, thr, binary=True):
+        """
+        Image threshold. Returns an image.
+        binary : wether to return a binary mask or the original pixel values ( only the ones above the threshold ).
+        """
+        img = (self.img > thr)
+
+        if not binary:
+            img = self.img * img
+
+        return Image(self.resolution, img=img.astype(np.int16), info=f"Threshold {self.filename}, thr = {thr}")
+
+    # def local_max(self, order):
+    #     """
+    #     Finds local maxima in Image.
+    #     Returns points.
+    #     """
+    #     # local_maxima_3D from utils
+    #     coords, values = local_maxima_3D(self.img, order=order)
+    #     return Points(coords, units='pix', resolution=self.resolution, info={'values': values})
+
+    def imwrite(self, filename):
+        """
+        Saves image to disc as tif.
+        """
+        # ImageJ hyperstack axes must be in TZCYXS order...
+        # it ignores my 'axis' metadata (Is it called something else?).. so just expand to ZCYX
+        tif.imwrite(filename, np.expand_dims(self.img, axis=1), imagej=True)
+
+
 def roi_to_centroids(rois):
     """
     creates a centroid for every pixel in the rois
@@ -192,6 +296,16 @@ def roi_to_centroids(rois):
     return centroids.astype(int)
 
 
+def get_image_shape(img_file):
+    # get file info
+    stack = TiffFile(img_file, _multifile=False)
+    z_size = len(stack.pages)
+    page = stack.pages.get(0)
+    y_size, x_size = page.shape
+    stack.close()
+    return (z_size, y_size, x_size)
+
+
 def split_to_rois(img_file, zyx_chunks, zyx_padding):
     """
     Splits an image into a given number of rois in z, y, x
@@ -214,12 +328,7 @@ def split_to_rois(img_file, zyx_chunks, zyx_padding):
         axis_breaks.append(axis_size - axis_padding)
         return axis_breaks
 
-    # get file info
-    stack = TiffFile(img_file, _multifile=False)
-    z_size = len(stack.pages)
-    page = stack.pages.get(0)
-    y_size, x_size = page.shape
-    stack.close()
+    (z_size, y_size, x_size) = get_image_shape(img_file)
     # find how to break the axis
     z_breaks = get_axis_breaks(z_size, zyx_chunks[0], zyx_padding[0])
     y_breaks = get_axis_breaks(y_size, zyx_chunks[1], zyx_padding[1])
@@ -236,5 +345,78 @@ def split_to_rois(img_file, zyx_chunks, zyx_padding):
     return rois
 
 
+def test_numba():
+    from loader import load_centroids, load_labels, load_image, drop_unsegmented
+    from datasets import TwoSlicesDataset
+    import os
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.axes_grid1 import ImageGrid
+    import torch
+    from torch.utils.data import DataLoader, Subset
+    import pytorch_lightning as pl
+
+    seed = 222
+    pl.seed_everything(seed, workers=True)
+
+    def plot_examples(dataset, main_title):
+        print("using dataloader")
+        # dataloader returns the nicer order of BxCxHxW
+        dataloader = DataLoader(Subset(dataset, dataset.examples_idx), batch_size=6)
+        (img1, img2), label = next(iter(dataloader))
+        print(img1.shape)
+        print(label)
+
+        imgs = torch.cat((img1, img2), dim=2)
+        print(imgs.shape)
+
+        fig = plt.figure(figsize=(6., 3.))
+        grid = ImageGrid(fig, 111,  # similar to subplot(111)
+                         nrows_ncols=(1, 6),  # creates 2x2 grid of axes
+                         axes_pad=0.1,  # pad between axes in inch.
+                         share_all=True)
+
+        for i_cell, ax in enumerate(grid):
+            # Iterating over the grid returns the Axes.
+            ax.imshow(torch.squeeze(imgs[i_cell]))
+            ax.set_title(f"Label\n{label[i_cell]}")
+        fig.suptitle(main_title)
+        plt.show()
+
+    data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+    side = 15
+
+    roi_id = "1-1VWT"
+    npz_filename = os.path.join(data_dir, roi_id, "ROI_1-1VWT.npz")
+    csv_filename = os.path.join(data_dir, roi_id, "ROI_1-1VWT_synaptic_only.csv")
+    img_filename = os.path.join(data_dir, roi_id, "Fish1_Nacre-like_47_LED_TP1-Done.ome.tiff")
+
+    centroids = load_centroids(npz_filename)
+    labels = load_labels(npz_filename, csv_filename)
+    centroids, labels = drop_unsegmented(centroids, labels, x_max=500, z_max=90)
+    img = load_image(img_filename)
+
+    print("numba = False")
+    print("using dataset, getting examples:")
+    dataset = TwoSlicesDataset(img, side, centroids, labels=labels, numba=False)
+    print(dataset.examples_idx)
+
+    (img1, img2), label = dataset[dataset.examples_idx]
+    print(img1.shape)
+    print(label)
+
+    plot_examples(dataset, "numba = False")
+
+    print("numba = True")
+    print("using dataset, getting examples:")
+    dataset = TwoSlicesDataset(img, side, centroids, labels=labels, numba=True)
+    print(dataset.examples_idx)
+
+    (img1, img2), label = dataset[dataset.examples_idx]
+    print(img1.shape)
+    print(label)
+
+    plot_examples(dataset, "numba = True")
+
+
 if __name__ == "__main__":
-    pass
+    test_numba()

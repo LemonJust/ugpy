@@ -2,6 +2,10 @@
 Structure from https://github.com/Lightning-AI/lightning/issues/9252
 """
 import glob
+import os
+
+import numpy as np
+import tifffile as tif
 
 import torch
 from torch import nn
@@ -16,7 +20,8 @@ import wandb
 
 from datasets import TwoSlicesDataModule, TwoSlicesProbMapModule
 from models import TwoBranchConv2d
-from preprocess import split_to_rois
+from preprocess import split_to_rois, get_image_shape, Image
+from loader import load_image
 
 
 class SynapseClassifier(LightningModule):
@@ -82,7 +87,7 @@ class SynapseClassifier(LightningModule):
         x = batch
         outs = self.model(x)
         prob = torch.sigmoid(outs)
-        return prob
+        return prob.type(torch.float16)
 
     def training_step(self, batch, batch_idx):
         return self.step(batch, batch_idx, self.train_metrics)
@@ -129,6 +134,58 @@ class SynapseClassifier(LightningModule):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
+
+
+def predict_prob_map_with_logger(image_file, image_name, run_id, rois=None):
+    """
+    Creates a probability map , working in chunks. Chunks are currently set up to work on my machine,
+    but might need to be entered by user in the future.
+    """
+    wandb_logger = WandbLogger(project=project_name, job_type='prob_map')
+
+    # you might want to change it for different machines
+    num_workers = 0
+
+    # # TODO : try wandb restore
+    checkpoint_path = glob.glob(f"D:/Code/repos/UGPy/ugpy/wandb/*{run_id}/files/*.ckpt")[0]
+    print(f"Using checkpoint : {checkpoint_path}")
+    model = SynapseClassifier.load_from_checkpoint(checkpoint_path)
+
+    # Initialize a trainer
+    trainer = pl.Trainer(max_epochs=1, accelerator='gpu', devices=1, logger=wandb_logger)
+
+    if rois is None:
+        # use chunks to draw probability map in pieces
+        zyx_chunks = [5, 5, 5]
+        zyx_padding = [10, 10, 10]
+        rois = split_to_rois(image_file, zyx_chunks, zyx_padding)
+
+    prob_map = np.zeros(get_image_shape(image_file), dtype=np.int16)
+    img = load_image(image_file)
+    for roi in rois:
+        data_module = TwoSlicesProbMapModule([roi], img=img, num_workers=num_workers)
+        prediction = trainer.predict(model, datamodule=data_module, ckpt_path=checkpoint_path)[0]
+        print(len(prediction))
+        print(prediction.requires_grad)
+        print(prediction.device)
+
+        SCALE = 1000
+        for i, pixel in enumerate(data_module.pred_dataset.centroids):
+            prob_map[pixel[0], pixel[1], pixel[2]] = int(prediction[i] * SCALE)
+        break
+
+    RESOLUTION = [0.68, 0.23, 0.23]
+    prob_image = Image(RESOLUTION, img=prob_map.astype(np.int16))
+    save_dir = "D:/Code/repos/UGPy/data/predict/prob_map/maps"
+    save_name = f"map_{image_name}_run_id{run_id}.tif"
+    prob_image.imwrite(os.path.join(save_dir, save_name))
+
+    wandb.config["image"] = image_name
+    wandb.config["run_id"] = run_id
+    wandb.config["num_workers"] = num_workers
+
+    # close wandb run
+    wandb.finish()
 
 
 def train_and_test_with_logger(project_name, seed, max_epochs, pos_weight, batch_size, num_workers=1):
@@ -209,8 +266,8 @@ def predict(project_name):
 
     img_file = "D:/Code/repos/UGPy/data/predict/prob_map/1-20FJ.tif"
     # use chunks to draw probability map in pieces
-    zyx_chunks = [5, 5, 5]
-    zyx_padding = [10, 100, 100]
+    zyx_chunks = [3, 3, 3]
+    zyx_padding = [10, 10, 10]
     rois = split_to_rois(img_file, zyx_chunks, zyx_padding)
     num_workers = 0
     batch_size = 50000
@@ -232,7 +289,7 @@ def predict(project_name):
     trainer = pl.Trainer(max_epochs=1,
                          accelerator='gpu', devices=1,
                          logger=wandb_logger)
-    prediction = trainer.predict(datamodule=data_module, ckpt_path=checkpoint_path)
+    prediction = trainer.predict(model, datamodule=data_module, ckpt_path=checkpoint_path)
 
     wandb.config["batch_size"] = batch_size
     wandb.config["num_pred"] = len(data_module.pred_dataset)
@@ -243,10 +300,13 @@ def predict(project_name):
 
 
 if __name__ == "__main__":
-    # seed = 222
-    # max_epochs = 20
-    # pos_weight = 5
-    # batch_size = 500
+    seed = 222
+    max_epochs = 20
+    pos_weight = 5
+    batch_size = 500
     project_name = 'UGPy-SynapseClassifier'
-    # train_and_test_with_logger(project_name, seed, max_epochs, pos_weight, batch_size)
-    predict(project_name)
+    train_and_test_with_logger(project_name, seed, max_epochs, pos_weight, batch_size)
+    #
+    # img_file = "D:/Code/repos/UGPy/data/predict/prob_map/raw/1-20FJ.tif"
+    # run_id = "3m51q4ne"
+    # predict_prob_map_with_logger(img_file, "1-20FJ", run_id, rois=None)
