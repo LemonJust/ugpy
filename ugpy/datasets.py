@@ -209,44 +209,11 @@ class TwoSlicesDataModule(pl.LightningDataModule):
         https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1WHA
         """
 
-        data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
-        side = 15
+        self.data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+        self.side = 15
 
         self.training_roi_ids = ["1-1WHA", "1-1VWT"]
         self.testing_roi_ids = ["1-1VXC"]
-
-        train_datasets = []
-        val_datasets = []
-        # to calculate the portion of positive examples (for logging)
-        num1_train = 0
-        num1_val = 0
-        for roi_id in self.training_roi_ids:
-            print(roi_id)
-            centroids, labels, img = load_data(data_dir, roi_id)
-            # to ensure that the same proportion of each fish is present in the validation
-            # TODO : do I need to worry about the tp1 and tp2 of the same fish
-            #  being present in the val and training data?
-            #  should I only use tp1 ( or 2 ) for a given fish in validation ?
-            centroids_train, centroids_val, labels_train, labels_val = train_test_split(centroids, labels,
-                                                                                        test_fraction=0.10)
-            num1_train = num1_train + np.sum(labels_train)
-            num1_val = num1_val + np.sum(labels_val)
-            train_datasets.append(TwoSlicesDataset(img, side, centroids_train, labels=labels_train))
-            val_datasets.append(TwoSlicesDataset(img, side, centroids_val, labels=labels_val))
-        self.train_dataset = ConcatDataset(train_datasets)
-        self.val_dataset = ConcatDataset(val_datasets)
-        self.frac1_train = num1_train / len(self.train_dataset)
-        self.frac1_val = num1_val / len(self.val_dataset)
-
-        datasets = []
-        num1_test = 0
-        for roi_id in self.testing_roi_ids:
-            print(roi_id)
-            centroids, labels, img = load_data(data_dir, roi_id)
-            num1_test = num1_test + np.sum(labels)
-            datasets.append(TwoSlicesDataset(img, side, centroids, labels=labels))
-        self.test_dataset = ConcatDataset(datasets)
-        self.frac1_test = num1_test / len(self.test_dataset)
 
     def setup(self, stage=None):
         """
@@ -261,6 +228,48 @@ class TwoSlicesDataModule(pl.LightningDataModule):
         Nothing to do here for me because I already did everything in the prepare_data
         ( due to how my data is made of individual fish, I had to do it that way)
         """
+        if stage == "fit" or stage is None:
+            print(f"Called setup 'stage == fit or stage is None' with {stage}")
+            # example use:
+            # self.train = Dataset(self.train_filenames, transform=True)
+            # self.val = Dataset(self.val_filenames)
+
+            train_datasets = []
+            val_datasets = []
+            # to calculate the portion of positive examples (for logging)
+            num1_train = 0
+            num1_val = 0
+            for roi_id in self.training_roi_ids:
+                print(roi_id)
+                centroids, labels, img = load_data(self.data_dir, roi_id)
+                # to ensure that the same proportion of each fish is present in the validation
+                # TODO : do I need to worry about the tp1 and tp2 of the same fish
+                #  being present in the val and training data?
+                #  should I only use tp1 ( or 2 ) for a given fish in validation ?
+                centroids_train, centroids_val, labels_train, labels_val = train_test_split(centroids, labels,
+                                                                                            test_fraction=0.10)
+                num1_train = num1_train + np.sum(labels_train)
+                num1_val = num1_val + np.sum(labels_val)
+                train_datasets.append(TwoSlicesDataset(img, self.side, centroids_train, labels=labels_train))
+                val_datasets.append(TwoSlicesDataset(img, self.side, centroids_val, labels=labels_val))
+            self.train_dataset = ConcatDataset(train_datasets)
+            self.val_dataset = ConcatDataset(val_datasets)
+            self.frac1_train = num1_train / len(self.train_dataset)
+            self.frac1_val = num1_val / len(self.val_dataset)
+
+        if stage == "test" or stage is None:
+            print(f"Called setup 'stage == test or stage is None' with {stage}")
+            # example use:
+            # self.test = Dataset(self.test_filenames)
+            datasets = []
+            num1_test = 0
+            for roi_id in self.testing_roi_ids:
+                print(roi_id)
+                centroids, labels, img = load_data(data_dir, roi_id)
+                num1_test = num1_test + np.sum(labels)
+                datasets.append(TwoSlicesDataset(img, side, centroids, labels=labels))
+            self.test_dataset = ConcatDataset(datasets)
+            self.frac1_test = num1_test / len(self.test_dataset)
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
