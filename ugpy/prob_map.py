@@ -1,36 +1,38 @@
 """
-Structure from https://github.com/Lightning-AI/lightning/issues/9252
+Builds a probability map for a given image.
+Uses prob_map_config.yaml to initialise.
 """
 import glob
-import os
-
+from numba import njit
 import numpy as np
-import torch
-from torch import nn
-
-import pytorch_lightning as pl
+import os
 from pytorch_lightning.loggers import WandbLogger
-
+import torch
 import wandb
 
 from classifier import ImClassifier
-
-from datasets import TwoSlicesDataModule, TwoSlicesProbMapModule
-from models import TwoBranchConv2d
-from preprocess import split_to_rois, get_image_shape, Image
+from datasets import TwoSlicesProbMapModule
+from preprocess import split_to_rois, Image
 from loader import load_image
-from numba import njit
 
 
 @njit
 def place_predictions_into_map(prob_map, centroids, prediction, scale):
+    """
+    Puts predictions into the corresponding spots in the image.
+    :param prob_map: numpy array, the size of the image being processes
+    :param centroids: numpy array, Nx3, coordinates of the pixels in the image in zyx order
+    :param prediction: numpy array, predictions for each pixel, dtype float32
+    :param scale: the number to multiply each prediction before turning it into int
+    :return: updated prob_map
+    """
     for i_pixel in range(len(prediction)):
         pixel = centroids[i_pixel]
         prob_map[pixel[0], pixel[1], pixel[2]] = int(prediction[i_pixel] * scale)
     return prob_map
 
 
-def prob_map_with_logger(wandb_logger):
+def prob_map_with_logger():
     """
     Creates a probability map , working in chunks. Chunks are currently set up to work on my machine,
     but might need to be entered by user in the future.
@@ -60,28 +62,18 @@ def prob_map_with_logger(wandb_logger):
                 print("Skipped")
             else:
                 data_module = TwoSlicesProbMapModule([roi], img, config=wandb.config)
-                print("creating dataset")
                 data_module.setup(stage='predict')
-                print("moving to GPU")
                 img1 = torch.permute(data_module.pred_dataset[:][0], (1, 0, 2, 3)).to('cuda')
                 img2 = torch.permute(data_module.pred_dataset[:][1], (1, 0, 2, 3)).to('cuda')
-                # print("creating dataloader")
-                # dataloader = data_module.predict_dataloader()
-                # print("getting batch")
-                # batch = next(iter(dataloader))
-                print("predicting")
                 prediction = torch.sigmoid(model((img1, img2)))
-                print("moving predictions to cpu")
                 prediction = prediction.to("cpu").numpy()
-                print("putting into the map")
-
                 prob_map = place_predictions_into_map(prob_map,
                                                       data_module.pred_dataset.centroids,
                                                       prediction,
                                                       wandb.config["scale_prob"])
     # save image
     prob_image = Image(wandb.config["resolution"], img=prob_map.astype(np.int16))
-    save_file = f'probmap_id{wandb.run.id}_ckpt{wandb.config["checkpoint_run_id"]}_{wandb.config["image_file"]}'
+    save_file = f'map_id_{wandb.run.id}_ckpt_{wandb.config["checkpoint_run_id"]}_{wandb.config["image_file"]}'
     save_file = os.path.join(wandb.config["save_dir"], save_file)
     print(f"Saving map as {save_file}")
     prob_image.imwrite(save_file)
@@ -96,4 +88,4 @@ if __name__ == "__main__":
     wandb_logger = WandbLogger(project="UGPy-SynapseClassifier",
                                job_type="prob_map",
                                config=config_file)
-    prob_map_with_logger(wandb_logger)
+    prob_map_with_logger()
