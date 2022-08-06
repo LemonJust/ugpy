@@ -170,19 +170,21 @@ class TwoSlicesDataModule(pl.LightningDataModule):
     https://pytorch-lightning.readthedocs.io/en/stable/extensions/datamodules.html
     """
 
-    def __init__(self, batch_size, num_workers=1, pin_memory=True):
+    def __init__(self, config):
         super().__init__()
 
-        self.batch_size = batch_size
+        self.config = config
 
         # self.transform = transforms.Compose([
         #     transforms.ToTensor(),
         #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         # ])
 
-        self.num_classes = 2
-        self.num_workers = num_workers
-        self.pin_memory = pin_memory
+        self.batch_size = config["batch_size"]
+        self.num_workers = config["num_workers"]
+        self.pin_memory = True
+        # collects info for the logger
+        self.info = {}
 
     def prepare_data(self):
         """
@@ -210,10 +212,16 @@ class TwoSlicesDataModule(pl.LightningDataModule):
         """
 
         self.data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
-        self.side = 15
+        self.side = self.config['slice_side']
 
-        self.training_roi_ids = ["1-1WHA", "1-1VWT"]
-        self.testing_roi_ids = ["1-1VXC"]
+        self.training_roi_ids = self.config['data_train']
+        self.validation_roi_ids = self.config['data_valid']
+        self.testing_roi_ids = self.config['data_test']
+        # check if validation data is the same as train.
+        # If true, will do train validation split. Else will load a separate dataset for validation.
+        self.tv_split = set(self.training_roi_ids) == set(self.validation_roi_ids)
+
+        #TODO : check here that these files exist in the data directory
 
     def setup(self, stage=None):
         """
@@ -224,9 +232,6 @@ class TwoSlicesDataModule(pl.LightningDataModule):
         create datasets,
         apply transforms (defined explicitly in your datamodule),
         etc…
-
-        Nothing to do here for me because I already did everything in the prepare_data
-        ( due to how my data is made of individual fish, I had to do it that way)
         """
         if stage == "fit" or stage is None:
             print(f"Called setup 'stage == fit or stage is None' with {stage}")
@@ -237,40 +242,57 @@ class TwoSlicesDataModule(pl.LightningDataModule):
             train_datasets = []
             val_datasets = []
             # to calculate the portion of positive examples (for logging)
-            num1_train = 0
-            num1_val = 0
-            for roi_id in self.training_roi_ids:
-                centroids, labels, img = load_data(self.data_dir, roi_id)
-                # to ensure that the same proportion of each fish is present in the validation
-                # TODO : do I need to worry about the tp1 and tp2 of the same fish
-                #  being present in the val and training data?
-                #  should I only use tp1 ( or 2 ) for a given fish in validation ?
-                centroids_train, centroids_val, labels_train, labels_val = train_test_split(centroids, labels,
-                                                                                            test_fraction=0.10)
-                num1_train = num1_train + np.sum(labels_train)
-                num1_val = num1_val + np.sum(labels_val)
-                print(f"Getting train data from {roi_id}")
-                train_datasets.append(TwoSlicesDataset(img, self.side, centroids_train, labels=labels_train))
-                print(f"Getting validation data from {roi_id}")
-                val_datasets.append(TwoSlicesDataset(img, self.side, centroids_val, labels=labels_val))
+            total_pos_label_train = 0
+            total_pos_label_val = 0
+
+            # TODO : make a function to load centroids and append dataset
+            if self.tv_split:
+                print("Splitting each fish into train-validation datasets.")
+                for roi_id in self.training_roi_ids:
+                    centroids, labels, img = load_data(self.data_dir, roi_id)
+                    # do in a loop, to ensure that the same proportion of each fish is present in the validation
+                    centroids_train, centroids_val, labels_train, labels_val = train_test_split(centroids, labels,
+                                                                                                test_fraction=0.10)
+                    total_pos_label_train = total_pos_label_train + np.sum(labels_train)
+                    total_pos_label_val = total_pos_label_val + np.sum(labels_val)
+                    print(f"Getting train data from {roi_id}")
+                    train_datasets.append(TwoSlicesDataset(img, self.side, centroids_train, labels=labels_train))
+                    print(f"Getting validation data from {roi_id}")
+                    val_datasets.append(TwoSlicesDataset(img, self.side, centroids_val, labels=labels_val))
+            else:
+                for roi_id in self.training_roi_ids:
+                    centroids, labels, img = load_data(self.data_dir, roi_id)
+                    total_pos_label_train = total_pos_label_train + np.sum(labels)
+                    print(f"Getting train data from {roi_id}")
+                    train_datasets.append(TwoSlicesDataset(img, self.side, centroids, labels=labels))
+                for roi_id in self.validation_roi_ids:
+                    centroids, labels, img = load_data(self.data_dir, roi_id)
+                    total_pos_label_val = total_pos_label_val + np.sum(labels)
+                    print(f"Getting validation data from {roi_id}")
+                    val_datasets.append(TwoSlicesDataset(img, self.side, centroids, labels=labels))
+
             self.train_dataset = ConcatDataset(train_datasets)
             self.val_dataset = ConcatDataset(val_datasets)
-            self.frac1_train = num1_train / len(self.train_dataset)
-            self.frac1_val = num1_val / len(self.val_dataset)
+            self.info.update({"num_train": len(self.train_dataset),
+                              "num_val": len(self.val_dataset),
+                              "frac1_train": total_pos_label_train / len(self.train_dataset),
+                              "frac1_val": total_pos_label_val / len(self.val_dataset)})
 
         if stage == "test" or stage is None:
             print(f"Called setup 'stage == test or stage is None' with {stage}")
             # example use:
             # self.test = Dataset(self.test_filenames)
             datasets = []
-            num1_test = 0
+            total_pos_label_test = 0
             for roi_id in self.testing_roi_ids:
                 centroids, labels, img = load_data(self.data_dir, roi_id)
-                num1_test = num1_test + np.sum(labels)
+                total_pos_label_test = total_pos_label_test + np.sum(labels)
                 print(f"Getting test data from {roi_id}")
                 datasets.append(TwoSlicesDataset(img, self.side, centroids, labels=labels))
+
             self.test_dataset = ConcatDataset(datasets)
-            self.frac1_test = num1_test / len(self.test_dataset)
+            self.info.update({"num_train": len(self.test_dataset),
+                              "frac1_test": total_pos_label_test / len(self.test_dataset)})
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
@@ -290,33 +312,34 @@ class TwoSlicesProbMapModule(pl.LightningDataModule):
     Prepares data for prediction.
     """
 
-    def __init__(self, rois, batch_size=None, img=None, image_filename=None, num_workers=1, pin_memory=True):
+    def __init__(self, rois, img, config):
         super().__init__()
+        self.config = config
 
-        assert (img is not None) != (image_filename is not None), \
-            "img or image_filename need to be provided , but not both"
-
-        self.batch_size = batch_size
-
-        self.num_classes = 2
-        self.num_workers = num_workers
-        self.pin_memory = pin_memory
+        self.batch_size = config["batch_size"]
+        self.num_workers = config["num_workers"]
+        self.pin_memory = True
 
         self.rois = rois
-        if img is None:
-            self.image = load_image(image_filename)
-        else:
-            self.image = img
+        self.image = img
+        # will be created by running prepare data
+        self.pred_dataset = None
 
     def prepare_data(self):
         """
         prepares the data to be predicted
         """
-        side = 15
-        self.pred_dataset = TwoSlicesDataset.from_rois(self.image, side, self.rois)
-        if self.batch_size is None:
-            self.batch_size = len(self.pred_dataset)
-        print("Done loading rois")
+        pass
+
+    def setup(self, stage=None):
+        if stage == "predict" or stage is None:
+            print(f"Called setup 'stage == predict or stage is None' with {stage}")
+            side = self.config["slice_side"]
+            print(f"Getting predict data")
+            self.pred_dataset = TwoSlicesDataset.from_rois(self.image, side, self.rois)
+            print("Done")
+            if self.batch_size == "all":
+                self.batch_size = len(self.pred_dataset)
 
     def predict_dataloader(self):
         return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=False,

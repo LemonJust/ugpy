@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------- #
+# Model
+# ---------------------------------------------------------------------------- #
+model:
+  value: TwoBranchConv2d
+input_shape:
+  value: 1x15x15
+input_slices:
+  value: zy,yx
+slice_side:
+  value: 15
+
+loss:
+  value: BCEWithLogitsLoss
+loss_weight:
+  value: 5
+
+optimizer:
+  value: Adam
+optimizer_lr:
+  value: 0.0002
+
+# ---------------------------------------------------------------------------- #
+# Checkpoint
+# ---------------------------------------------------------------------------- #:
+
+checkpoint_dir:
+  value: D:/Code/repos/UGPy/ugpy/wandb
+checkpoint_run_id:
+  value: 3m51q4ne
+
+# ---------------------------------------------------------------------------- #
+# Data
+# ---------------------------------------------------------------------------- #:
+normalization:
+  value: standardise by fish
+
+image_dir:
+  value: D:/Code/repos/UGPy/data/predict/prob_map/raw
+save_dir:
+  value: D:/Code/repos/UGPy/data/predict/prob_map/maps
+image_file:
+  value: 1-20FJ.tif
+
+# ---------------------------------------------------------------------------- #
+# Prediction
+# ---------------------------------------------------------------------------- #
+scale_prob:
+  desc: Multiply probability by this value before turning into int.
+  value: 1000
+
+batch_size:
+  value: all # batch size equals total samples per roi
+num_workers:
+  value: 0
+
+accelerator:
+  value: 'gpu'

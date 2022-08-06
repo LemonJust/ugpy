@@ -1,5 +1,6 @@
 import numpy as np
 from tifffile import TiffFile
+import tifffile as tif
 from numba import njit
 import scipy.ndimage as nd
 

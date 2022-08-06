@@ -1,0 +1,60 @@
+# ---------------------------------------------------------------------------- #
+# Model
+# ---------------------------------------------------------------------------- #
+model:
+  value: TwoBranchConv2d
+input_shape:
+  value: 1x15x15
+input_slices:
+  value: zy,yx
+slice_side:
+  value: 15
+
+loss:
+  value: BCEWithLogitsLoss
+loss_weight:
+  value: 5
+
+optimizer:
+  value: Adam
+optimizer_lr:
+  value: 0.0002
+
+# ---------------------------------------------------------------------------- #
+# Data
+# ---------------------------------------------------------------------------- #:
+normalization:
+  value: standardise by fish
+drop_unsegmented:
+  value: all
+
+data_train:
+  value:
+    - 1-1WHA
+    - 1-1VWT
+data_valid:
+  value:
+    - 1-1WHA
+    - 1-1VWT
+data_test:
+  value:
+    - 1-1VXC
+
+# ---------------------------------------------------------------------------- #
+# Training
+# ---------------------------------------------------------------------------- #
+batch_size:
+  value: 500 # batch size Per GPU
+num_workers:
+  value: 0
+max_epochs:
+  value: 20
+
+accelerator:
+  value: 'gpu'
+
+seed:
+  value: 222
+deterministic:
+  value: True
+

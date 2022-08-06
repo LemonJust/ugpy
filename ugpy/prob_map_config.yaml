@@ -1,0 +1,98 @@
+# ---------------------------------------------------------------------------- #
+# Model
+# ---------------------------------------------------------------------------- #
+model:
+  value: TwoBranchConv2d
+input_shape:
+  value: 1x15x15
+input_slices:
+  value: zy,yx
+slice_side:
+  value: 15
+
+loss:
+  value: BCEWithLogitsLoss
+loss_weight:
+  value: 5
+
+optimizer:
+  value: Adam
+optimizer_lr:
+  value: 0.0002
+
+# ---------------------------------------------------------------------------- #
+# Checkpoint
+# ---------------------------------------------------------------------------- #:
+
+checkpoint_dir:
+  value: D:/Code/repos/UGPy/ugpy/wandb
+checkpoint_run_id:
+  value: 3m51q4ne
+
+# ---------------------------------------------------------------------------- #
+# Data
+# ---------------------------------------------------------------------------- #:
+normalization:
+  value: standardise by fish
+
+image_dir:
+  value: D:/Code/repos/UGPy/data/predict/prob_map/raw
+save_dir:
+  value: D:/Code/repos/UGPy/data/predict/prob_map/maps
+image_file:
+  value: 1-20FJ.tif
+
+resolution:
+  desc: Image resolution. ZYX order.
+  value:
+    - 0.68
+    - 0.23
+    - 0.23
+
+split:
+  desc: How to split the image into chunks for processing. ZYX order.
+  value:
+    - 5
+    - 5
+    - 5
+margin:
+  desc: Number of pixels from both sides of the image to ignore. ZYX order. 
+        Ignores these many pixels from each side.
+  value:
+    - 10
+    - 10
+    - 10
+skip_rois:
+  desc: You can skip prediction for certain regions. 
+        Useful for testing new parameters, when you don't need to predict for the whole image.
+        Roi ids shouldn't exceed the total number of rois you have. Use [] to keep all the rois.
+        (multiply values in split and subtract 1 due to indexing starting at 0)
+  value: []
+#    - 1
+#    - 3
+#    - 5
+#    - 7
+#    - 9
+#    - 11
+#    - 13
+#    - 15
+#    - 17
+#    - 19
+#    - 21
+#    - 23
+
+# ---------------------------------------------------------------------------- #
+# Prediction
+# ---------------------------------------------------------------------------- #
+scale_prob:
+  desc: Multiply probability by this value before turning into int.
+  value: 1000
+
+batch_size:
+  value: all # batch size equals total samples per roi
+num_workers:
+  value: 0
+
+accelerator:
+  value: 'gpu'
+
