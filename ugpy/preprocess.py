@@ -267,7 +267,17 @@ class Image:
         """
         # ImageJ hyperstack axes must be in TZCYXS order...
         # it ignores my 'axis' metadata (Is it called something else?).. so just expand to ZCYX
-        tif.imwrite(filename, np.expand_dims(self.img, axis=1), imagej=True)
+        tif.imwrite(filename, np.expand_dims(self.img, axis=1).astype(np.uint16), imagej=True)
+
+    @staticmethod
+    def get_image_shape(img_file):
+        # get file info
+        stack = TiffFile(img_file, _multifile=False)
+        z_size = len(stack.pages)
+        page = stack.pages.get(0)
+        y_size, x_size = page.shape
+        stack.close()
+        return (z_size, y_size, x_size)
 
 
 def roi_to_centroids(rois):

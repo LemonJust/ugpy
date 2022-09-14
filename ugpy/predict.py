@@ -1,4 +1,6 @@
 """
+THIS FILE IS UNFINISHED !!!
+just a template ...
 Structure from https://github.com/Lightning-AI/lightning/issues/9252
 """
 import glob
@@ -187,7 +189,7 @@ def prob_map_with_logger(wandb_logger):
 
 
 if __name__ == "__main__":
-    config_file = "predict_config.yaml"
+    config_file = "predict_config2.yaml"
 
     wandb_logger = WandbLogger(project="UGPy-SynapseClassifier",
                                job_type="prob_map",

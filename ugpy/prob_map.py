@@ -83,7 +83,7 @@ def prob_map_with_logger():
 
 
 if __name__ == "__main__":
-    config_file = "prob_map_config.yaml"
+    config_file = "prob_map_config2.yaml"
 
     wandb_logger = WandbLogger(project="UGPy-SynapseClassifier",
                                job_type="prob_map",

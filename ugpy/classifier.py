@@ -6,11 +6,12 @@ from torch import nn
 from torchmetrics import MetricCollection, F1Score, Precision, Recall, MeanMetric, Metric
 
 from pytorch_lightning import LightningModule
-from models import TwoBranchConv2d
+from models import TwoBranchConv2d, Conv3d
 
 
 class ImClassifier(LightningModule):
     """
+    Imbalanced Classifier.
     Implements the training and getting necessary metrics for the binary classification using imbalanced data.
     The loss is set to BCEWithLogitsLoss, the model can vary. Add the model to the choose_model()
     if you are adding to the list of the models that can work with this class.
@@ -48,9 +49,11 @@ class ImClassifier(LightningModule):
     def configure_model(self):
         if self.config["model"] == "TwoBranchConv2d":
             self.model = TwoBranchConv2d()
+        elif self.config["model"] == "Conv3d":
+            self.model = Conv3d()
         else:
             # add to the list of available names if you implement another one
-            raise ValueError('config["model"] can be only "TwoBranchConv2d"')
+            raise ValueError('config["model"] can be only "TwoBranchConv2d" or "Conv3d"')
 
     def configure_criterion(self):
 
