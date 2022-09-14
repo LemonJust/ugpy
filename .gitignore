@@ -13,3 +13,11 @@ ugpy/__pycache__/
 ugpy/synspy/analyze/__pycache__/
 
 ugpy/synspy/__pycache__/
+
+desktop.ini
+
+manual/.ipynb_checkpoints/
+
+manual/__pycache__/
+
+tmp/

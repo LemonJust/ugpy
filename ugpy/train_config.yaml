@@ -3,11 +3,13 @@
 # ---------------------------------------------------------------------------- #
 model:
   value: TwoBranchConv2d
+input_type:
+  value: two slices
 input_shape:
   value: 1x15x15
-input_slices:
+input_crop:
   value: zy,yx
-slice_side:
+crop_side:
   value: 15
 
 loss:
@@ -22,6 +24,16 @@ optimizer_lr:
 
 # ---------------------------------------------------------------------------- #
 # Data
+# Human segmentations:
+#        Zhuowei:
+#        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VX8
+#        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VXC
+#        Olivia:
+#        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VWT
+#        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VWW
+#        ML segmented, then human corrected:
+#        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1WH8
+#        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1WHA
 # ---------------------------------------------------------------------------- #:
 normalization:
   value: standardise by fish

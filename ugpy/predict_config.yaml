@@ -3,11 +3,13 @@
 # ---------------------------------------------------------------------------- #
 model:
   value: TwoBranchConv2d
+input_type:
+  value: two slices
 input_shape:
   value: 1x15x15
 input_slices:
   value: zy,yx
-slice_side:
+crop_side:
   value: 15
 
 loss:

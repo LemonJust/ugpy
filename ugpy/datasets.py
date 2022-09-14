@@ -17,14 +17,219 @@ from splitter import train_test_split
 import os
 import warnings
 
-"""
-Slices ________________________________________________________________________________________________________________
-"""
+
+class CropDataModule(pl.LightningDataModule):
+    """
+    Prepares data for training, validation and testing.
+
+    For more info on LightningDataModule , see
+    https://pytorch-lightning.readthedocs.io/en/stable/extensions/datamodules.html
+    """
+
+    def __init__(self, config):
+        super().__init__()
+
+        self.config = config
+
+        # self.transform = transforms.Compose([
+        #     transforms.ToTensor(),
+        #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        # ])
+
+        self.batch_size = config["batch_size"]
+        self.num_workers = config["num_workers"]
+        self.pin_memory = True
+        # collects info for the logger
+        self.info = {}
+
+    def choose_dataset(self, image, centroids, labels):
+        """
+        Chooses the dataset based on the config file
+        :return: custom Dataset
+        """
+        side = self.config["crop_side"]
+        if self.config["input_type"] == "two slices":
+            dataset = TwoSlicesDataset(image, side, centroids, labels=labels)
+        elif self.config["input_type"] == "volume":
+            dataset = VolumeDataset(image, side, centroids, labels=labels)
+        else:
+            raise ValueError(f"input_type can be 'two slices' or 'volume' only, but got {self.config['input_type']}")
+
+        return dataset
+
+    def prepare_data(self):
+        """
+        Downloading and saving data with multiple processes (distributed settings) will result in corrupted data.
+        Lightning ensures the prepare_data() is called only within a single process,
+        so you can safely add your downloading logic within. In case of multi-node training,
+        the execution of this hook depends upon prepare_data_per_node.
+
+        download,
+        tokenize,
+        etc…
+
+        In my case I will create a full dataset here.
+        """
+
+        self.data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+
+        self.training_roi_ids = self.config['data_train']
+        self.validation_roi_ids = self.config['data_valid']
+        self.testing_roi_ids = self.config['data_test']
+        # check if validation data is the same as train.
+        # If true, will do train validation split. Else will load a separate dataset for validation.
+        self.tv_split = set(self.training_roi_ids) == set(self.validation_roi_ids)
+
+        # TODO : check here that these files exist in the data directory
+
+    def setup(self, stage=None):
+        """
+        There are also data operations you might want to perform on every GPU. Use setup() to do things like:
+        count number of classes,
+        build vocabulary,
+        perform train/val/test splits,
+        create datasets,
+        apply transforms (defined explicitly in your datamodule),
+        etc…
+        """
+        if stage == "fit" or stage is None:
+            print(f"Called setup 'stage == fit or stage is None' with {stage}")
+            # example use:
+            # self.train = Dataset(self.train_filenames, transform=True)
+            # self.val = Dataset(self.val_filenames)
+
+            train_datasets = []
+            val_datasets = []
+            # to calculate the portion of positive examples (for logging)
+            total_pos_label_train = 0
+            total_pos_label_val = 0
+
+            # TODO : make a function to load centroids and append dataset
+            if self.tv_split:
+                print("Splitting each fish into train-validation datasets.")
+                for roi_id in self.training_roi_ids:
+                    centroids, labels, img = load_data(self.data_dir, roi_id)
+                    # do in a loop, to ensure that the same proportion of each fish is present in the validation
+                    centroids_train, centroids_val, labels_train, labels_val = train_test_split(centroids, labels,
+                                                                                                test_fraction=0.10)
+
+                    print(f"Getting train data from {roi_id}")
+                    train_datasets.append(self.choose_dataset(img, centroids_train, labels_train))
+                    print(f"Getting validation data from {roi_id}")
+                    val_datasets.append(self.choose_dataset(img, centroids_val, labels_val))
+
+                    # keep track of total positive examples
+                    total_pos_label_train = total_pos_label_train + np.sum(labels_train)
+                    total_pos_label_val = total_pos_label_val + np.sum(labels_val)
+            else:
+                for roi_id in self.training_roi_ids:
+                    centroids, labels, img = load_data(self.data_dir, roi_id)
+                    print(f"Getting train data from {roi_id}")
+                    train_datasets.append(self.choose_dataset(img, centroids, labels))
+                    # keep track of total positive examples
+                    total_pos_label_train = total_pos_label_train + np.sum(labels)
+
+                for roi_id in self.validation_roi_ids:
+                    centroids, labels, img = load_data(self.data_dir, roi_id)
+                    print(f"Getting validation data from {roi_id}")
+                    val_datasets.append(self.choose_dataset(img, centroids, labels))
+                    # keep track of total positive examples
+                    total_pos_label_val = total_pos_label_val + np.sum(labels)
+
+            self.train_dataset = ConcatDataset(train_datasets)
+            self.val_dataset = ConcatDataset(val_datasets)
+            self.info.update({"num_train": len(self.train_dataset),
+                              "num_val": len(self.val_dataset),
+                              "frac1_train": total_pos_label_train / len(self.train_dataset),
+                              "frac1_val": total_pos_label_val / len(self.val_dataset)})
+
+        if stage == "test" or stage is None:
+            print(f"Called setup 'stage == test or stage is None' with {stage}")
+            # example use:
+            # self.test = Dataset(self.test_filenames)
+            datasets = []
+            total_pos_label_test = 0
+            for roi_id in self.testing_roi_ids:
+                centroids, labels, img = load_data(self.data_dir, roi_id)
+                print(f"Getting test data from {roi_id}")
+                datasets.append(self.choose_dataset(img, centroids, labels))
+                # keep track of total positive examples
+                total_pos_label_test = total_pos_label_test + np.sum(labels)
+
+            self.test_dataset = ConcatDataset(datasets)
+            self.info.update({"num_train": len(self.test_dataset),
+                              "frac1_test": total_pos_label_test / len(self.test_dataset)})
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
+                          num_workers=self.num_workers, pin_memory=self.pin_memory)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False,
+                          num_workers=self.num_workers, pin_memory=self.pin_memory)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
+                          num_workers=self.num_workers, pin_memory=self.pin_memory)
 
 
+class CropProbMapModule(pl.LightningDataModule):
+    """
+    Prepares data for making a probability map.
+    """
+
+    def __init__(self, rois, img, config):
+        super().__init__()
+        self.config = config
+
+        self.batch_size = config["batch_size"]
+        self.num_workers = config["num_workers"]
+        self.pin_memory = True
+
+        self.rois = rois
+        self.image = img
+        # will be created by running prepare data
+        self.pred_dataset = None
+
+    def choose_dataset(self):
+        """
+        Chooses the dataset based on the config file
+        :return: custom Dataset
+        """
+        side = self.config["crop_side"]
+        if self.config["input_type"] == "two slices":
+            dataset = TwoSlicesDataset.from_rois(self.image, side, self.rois)
+        elif self.config["input_type"] == "volume":
+            dataset = VolumeDataset.from_rois(self.image, side, self.rois)
+        else:
+            raise ValueError(f"input_type can be 'two slices' or 'volume' only, but got {self.config['input_type']}")
+
+        return dataset
+
+    def prepare_data(self):
+        """
+        prepares the data to be predicted
+        """
+        pass
+
+    def setup(self, stage=None):
+        if stage == "predict" or stage is None:
+            print(f"Called setup 'stage == predict or stage is None' with {stage}")
+            print(f"Getting predict data")
+            self.pred_dataset = self.choose_dataset()
+            print("Done")
+            if self.batch_size == "all":
+                self.batch_size = len(self.pred_dataset)
+
+    def predict_dataloader(self):
+        return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=False,
+                          num_workers=self.num_workers, pin_memory=self.pin_memory)
+
+
+# TODO : Create CropDataset and inherit TwoSlicesDataset and VolumeDataset from it
 class TwoSlicesDataset(Dataset):
     """
-    Crops slices through the center of the
+    Crops slices through the center of the synapse
     """
     # what data type to use when converting images to tensors
     # TODO : compare float32 to float16
@@ -167,193 +372,7 @@ class TwoSlicesDataset(Dataset):
         pass
 
 
-class TwoSlicesDataModule(pl.LightningDataModule):
-    """
-    For more info on LightningDataModule , see
-    https://pytorch-lightning.readthedocs.io/en/stable/extensions/datamodules.html
-    """
-
-    def __init__(self, config):
-        super().__init__()
-
-        self.config = config
-
-        # self.transform = transforms.Compose([
-        #     transforms.ToTensor(),
-        #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        # ])
-
-        self.batch_size = config["batch_size"]
-        self.num_workers = config["num_workers"]
-        self.pin_memory = True
-        # collects info for the logger
-        self.info = {}
-
-    def prepare_data(self):
-        """
-        Downloading and saving data with multiple processes (distributed settings) will result in corrupted data.
-        Lightning ensures the prepare_data() is called only within a single process,
-        so you can safely add your downloading logic within. In case of multi-node training,
-        the execution of this hook depends upon prepare_data_per_node.
-
-        download,
-        tokenize,
-        etc…
-
-        In my case I will create a full dataset here.
-
-        Human segmentations:
-        Zhuowei:
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VX8
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VXC
-        Olivia:
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VWT
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VWW
-        ML segmented, then human corrected:
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1WH8
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1WHA
-        """
-
-        self.data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
-        self.side = self.config['slice_side']
-
-        self.training_roi_ids = self.config['data_train']
-        self.validation_roi_ids = self.config['data_valid']
-        self.testing_roi_ids = self.config['data_test']
-        # check if validation data is the same as train.
-        # If true, will do train validation split. Else will load a separate dataset for validation.
-        self.tv_split = set(self.training_roi_ids) == set(self.validation_roi_ids)
-
-        # TODO : check here that these files exist in the data directory
-
-    def setup(self, stage=None):
-        """
-        There are also data operations you might want to perform on every GPU. Use setup() to do things like:
-        count number of classes,
-        build vocabulary,
-        perform train/val/test splits,
-        create datasets,
-        apply transforms (defined explicitly in your datamodule),
-        etc…
-        """
-        if stage == "fit" or stage is None:
-            print(f"Called setup 'stage == fit or stage is None' with {stage}")
-            # example use:
-            # self.train = Dataset(self.train_filenames, transform=True)
-            # self.val = Dataset(self.val_filenames)
-
-            train_datasets = []
-            val_datasets = []
-            # to calculate the portion of positive examples (for logging)
-            total_pos_label_train = 0
-            total_pos_label_val = 0
-
-            # TODO : make a function to load centroids and append dataset
-            if self.tv_split:
-                print("Splitting each fish into train-validation datasets.")
-                for roi_id in self.training_roi_ids:
-                    centroids, labels, img = load_data(self.data_dir, roi_id)
-                    # do in a loop, to ensure that the same proportion of each fish is present in the validation
-                    centroids_train, centroids_val, labels_train, labels_val = train_test_split(centroids, labels,
-                                                                                                test_fraction=0.10)
-                    total_pos_label_train = total_pos_label_train + np.sum(labels_train)
-                    total_pos_label_val = total_pos_label_val + np.sum(labels_val)
-                    print(f"Getting train data from {roi_id}")
-                    train_datasets.append(TwoSlicesDataset(img, self.side, centroids_train, labels=labels_train))
-                    print(f"Getting validation data from {roi_id}")
-                    val_datasets.append(TwoSlicesDataset(img, self.side, centroids_val, labels=labels_val))
-            else:
-                for roi_id in self.training_roi_ids:
-                    centroids, labels, img = load_data(self.data_dir, roi_id)
-                    total_pos_label_train = total_pos_label_train + np.sum(labels)
-                    print(f"Getting train data from {roi_id}")
-                    train_datasets.append(TwoSlicesDataset(img, self.side, centroids, labels=labels))
-                for roi_id in self.validation_roi_ids:
-                    centroids, labels, img = load_data(self.data_dir, roi_id)
-                    total_pos_label_val = total_pos_label_val + np.sum(labels)
-                    print(f"Getting validation data from {roi_id}")
-                    val_datasets.append(TwoSlicesDataset(img, self.side, centroids, labels=labels))
-
-            self.train_dataset = ConcatDataset(train_datasets)
-            self.val_dataset = ConcatDataset(val_datasets)
-            self.info.update({"num_train": len(self.train_dataset),
-                              "num_val": len(self.val_dataset),
-                              "frac1_train": total_pos_label_train / len(self.train_dataset),
-                              "frac1_val": total_pos_label_val / len(self.val_dataset)})
-
-        if stage == "test" or stage is None:
-            print(f"Called setup 'stage == test or stage is None' with {stage}")
-            # example use:
-            # self.test = Dataset(self.test_filenames)
-            datasets = []
-            total_pos_label_test = 0
-            for roi_id in self.testing_roi_ids:
-                centroids, labels, img = load_data(self.data_dir, roi_id)
-                total_pos_label_test = total_pos_label_test + np.sum(labels)
-                print(f"Getting test data from {roi_id}")
-                datasets.append(TwoSlicesDataset(img, self.side, centroids, labels=labels))
-
-            self.test_dataset = ConcatDataset(datasets)
-            self.info.update({"num_train": len(self.test_dataset),
-                              "frac1_test": total_pos_label_test / len(self.test_dataset)})
-
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-    def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-
-class TwoSlicesProbMapModule(pl.LightningDataModule):
-    """
-    Prepares data for prediction.
-    """
-
-    def __init__(self, rois, img, config):
-        super().__init__()
-        self.config = config
-
-        self.batch_size = config["batch_size"]
-        self.num_workers = config["num_workers"]
-        self.pin_memory = True
-
-        self.rois = rois
-        self.image = img
-        # will be created by running prepare data
-        self.pred_dataset = None
-
-    def prepare_data(self):
-        """
-        prepares the data to be predicted
-        """
-        pass
-
-    def setup(self, stage=None):
-        if stage == "predict" or stage is None:
-            print(f"Called setup 'stage == predict or stage is None' with {stage}")
-            side = self.config["slice_side"]
-            print(f"Getting predict data")
-            self.pred_dataset = TwoSlicesDataset.from_rois(self.image, side, self.rois)
-            print("Done")
-            if self.batch_size == "all":
-                self.batch_size = len(self.pred_dataset)
-
-    def predict_dataloader(self):
-        return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=False,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-
-"""
-Volumes ______________________________________________________________________________________________________________
-"""
-
-
+# TODO : Create CropDataset and inherit TwoSlicesDataset and VolumeDataset from it
 class VolumeDataset(Dataset):
     """
     Crops volumes through the center of the
@@ -491,190 +510,6 @@ class VolumeDataset(Dataset):
         pass
 
 
-class VolumeDataModule(pl.LightningDataModule):
-    """
-    For more info on LightningDataModule , see
-    https://pytorch-lightning.readthedocs.io/en/stable/extensions/datamodules.html
-    """
-
-    def __init__(self, config):
-        super().__init__()
-
-        self.config = config
-
-        # self.transform = transforms.Compose([
-        #     transforms.ToTensor(),
-        #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        # ])
-
-        self.batch_size = config["batch_size"]
-        self.num_workers = config["num_workers"]
-        self.pin_memory = True
-        # collects info for the logger
-        self.info = {}
-
-    def prepare_data(self):
-        """
-        Downloading and saving data with multiple processes (distributed settings) will result in corrupted data.
-        Lightning ensures the prepare_data() is called only within a single process,
-        so you can safely add your downloading logic within. In case of multi-node training,
-        the execution of this hook depends upon prepare_data_per_node.
-
-        download,
-        tokenize,
-        etc…
-
-        In my case I will create a full dataset here.
-
-        Human segmentations:
-        Zhuowei:
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VX8
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VXC
-        Olivia:
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VWT
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1VWW
-        ML segmented, then human corrected:
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1WH8
-        https://synapse.isrd.isi.edu/chaise/record/#1/Zebrafish:Image%20Region/RID=1-1WHA
-        """
-
-        self.data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
-        self.side = self.config['volume_side']
-
-        self.training_roi_ids = self.config['data_train']
-        self.validation_roi_ids = self.config['data_valid']
-        self.testing_roi_ids = self.config['data_test']
-        # check if validation data is the same as train.
-        # If true, will do train validation split. Else will load a separate dataset for validation.
-        self.tv_split = set(self.training_roi_ids) == set(self.validation_roi_ids)
-
-        # TODO : check here that these files exist in the data directory
-
-    def setup(self, stage=None):
-        """
-        There are also data operations you might want to perform on every GPU. Use setup() to do things like:
-        count number of classes,
-        build vocabulary,
-        perform train/val/test splits,
-        create datasets,
-        apply transforms (defined explicitly in your datamodule),
-        etc…
-        """
-        if stage == "fit" or stage is None:
-            print(f"Called setup 'stage == fit or stage is None' with {stage}")
-            # example use:
-            # self.train = Dataset(self.train_filenames, transform=True)
-            # self.val = Dataset(self.val_filenames)
-
-            train_datasets = []
-            val_datasets = []
-            # to calculate the portion of positive examples (for logging)
-            total_pos_label_train = 0
-            total_pos_label_val = 0
-
-            # TODO : make a function to load centroids and append dataset
-            # if making train test split
-            if self.tv_split:
-                print("Splitting each fish into train-validation datasets.")
-                for roi_id in self.training_roi_ids:
-                    centroids, labels, img = load_data(self.data_dir, roi_id)
-                    # do in a loop, to ensure that the same proportion of each fish is present in the validation
-                    centroids_train, centroids_val, labels_train, labels_val = train_test_split(centroids, labels,
-                                                                                                test_fraction=0.10)
-                    total_pos_label_train = total_pos_label_train + np.sum(labels_train)
-                    total_pos_label_val = total_pos_label_val + np.sum(labels_val)
-                    print(f"Getting train data from {roi_id}")
-                    train_datasets.append(VolumeDataset(img, self.side, centroids_train, labels=labels_train))
-                    print(f"Getting validation data from {roi_id}")
-                    val_datasets.append(VolumeDataset(img, self.side, centroids_val, labels=labels_val))
-            else:
-                for roi_id in self.training_roi_ids:
-                    centroids, labels, img = load_data(self.data_dir, roi_id)
-                    total_pos_label_train = total_pos_label_train + np.sum(labels)
-                    print(f"Getting train data from {roi_id}")
-                    train_datasets.append(VolumeDataset(img, self.side, centroids, labels=labels))
-                for roi_id in self.validation_roi_ids:
-                    centroids, labels, img = load_data(self.data_dir, roi_id)
-                    total_pos_label_val = total_pos_label_val + np.sum(labels)
-                    print(f"Getting validation data from {roi_id}")
-                    val_datasets.append(VolumeDataset(img, self.side, centroids, labels=labels))
-
-            self.train_dataset = ConcatDataset(train_datasets)
-            self.val_dataset = ConcatDataset(val_datasets)
-            self.info.update({"num_train": len(self.train_dataset),
-                              "num_val": len(self.val_dataset),
-                              "frac1_train": total_pos_label_train / len(self.train_dataset),
-                              "frac1_val": total_pos_label_val / len(self.val_dataset)})
-
-        if stage == "test" or stage is None:
-            print(f"Called setup 'stage == test or stage is None' with {stage}")
-            # example use:
-            # self.test = Dataset(self.test_filenames)
-            datasets = []
-            total_pos_label_test = 0
-            for roi_id in self.testing_roi_ids:
-                centroids, labels, img = load_data(self.data_dir, roi_id)
-                total_pos_label_test = total_pos_label_test + np.sum(labels)
-                print(f"Getting test data from {roi_id}")
-                datasets.append(VolumeDataset(img, self.side, centroids, labels=labels))
-
-            self.test_dataset = ConcatDataset(datasets)
-            self.info.update({"num_train": len(self.test_dataset),
-                              "frac1_test": total_pos_label_test / len(self.test_dataset)})
-
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-    def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-
-class VolumeProbMapModule(pl.LightningDataModule):
-    """
-    Prepares data for prediction.
-    """
-
-    def __init__(self, rois, img, config):
-        super().__init__()
-        self.config = config
-
-        self.batch_size = config["batch_size"]
-        self.num_workers = config["num_workers"]
-        self.pin_memory = True
-
-        self.rois = rois
-        self.image = img
-        # will be created by running prepare data
-        self.pred_dataset = None
-
-    def prepare_data(self):
-        """
-        prepares the data to be predicted
-        """
-        pass
-
-    def setup(self, stage=None):
-        if stage == "predict" or stage is None:
-            print(f"Called setup 'stage == predict or stage is None' with {stage}")
-            side = self.config["slice_side"]
-            print(f"Getting predict data")
-            self.pred_dataset = VolumeDataset.from_rois(self.image, side, self.rois)
-            print("Done")
-            if self.batch_size == "all":
-                self.batch_size = len(self.pred_dataset)
-
-    def predict_dataloader(self):
-        return DataLoader(self.pred_dataset, batch_size=self.batch_size, shuffle=False,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory)
-
-
-# TODO: CropDataModule --> to choose between volume and slice
 """
 _______________________________________________________________________________________________________________________
 Tests for the TwoSliceDataset and DataModule 

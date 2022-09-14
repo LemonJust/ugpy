@@ -8,7 +8,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 import wandb
 
-from datasets import TwoSlicesDataModule
+from datasets import CropDataModule
 from classifier import ImClassifier
 
 
@@ -18,7 +18,7 @@ def train_and_test_with_logger(wandb_logger):
     if wandb.config["deterministic"]:
         pl.seed_everything(wandb.config["seed"], workers=True)
     # initialise a datamodule
-    data_module = TwoSlicesDataModule(wandb.config)
+    data_module = CropDataModule(wandb.config)
     # set up the model
     model = ImClassifier(wandb.config)
     # callback to remember the model with the best validation loss
