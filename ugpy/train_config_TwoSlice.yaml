@@ -2,13 +2,13 @@
 # Model
 # ---------------------------------------------------------------------------- #
 model:
-  value: Conv3d
+  value: TwoBranchConv2d
 input_type:
-  value: volume
+  value: two slices
 input_shape:
-  value: 15x15x15
+  value: 1x15x15
 input_crop:
-  value: zyx
+  value: zy,yx
 crop_side:
   value: 15
 
@@ -66,7 +66,7 @@ accelerator:
   value: 'gpu'
 
 seed:
-  value: NA
+  value: 222
 deterministic:
-  value: False
+  value: True
 

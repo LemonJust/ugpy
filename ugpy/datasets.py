@@ -12,6 +12,7 @@ from loader import load_data, load_image
 from preprocess import Slices, Volumes, roi_to_centroids, split_to_rois
 from loader import load_centroids, load_labels, load_image, drop_unsegmented
 from splitter import train_test_split
+from augmentation import DataAugmentation
 
 # TODO : rewrite stuff from os.join to Path
 import os
@@ -35,6 +36,8 @@ class CropDataModule(pl.LightningDataModule):
         #     transforms.ToTensor(),
         #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         # ])
+
+        self.transform = DataAugmentation()  # per batch augmentation_kornia
 
         self.batch_size = config["batch_size"]
         self.num_workers = config["num_workers"]
@@ -417,7 +420,7 @@ class VolumeDataset(Dataset):
         else:
             self.labels = None
 
-        self.imgs1, self.imgs2 = self.get_volumes(img, side)
+        self.imgs = self.get_volumes(img, side)
 
     @staticmethod
     def get_examples(labels):
@@ -433,7 +436,7 @@ class VolumeDataset(Dataset):
     def get_volumes(self, img, side):
 
         # initialise slicer objects to make crops
-        cropper = Volumes([1, side, side])
+        cropper = Volumes([side, side, side])
 
         # check which centroids can be cropped with the currect box size
         cropable = cropper.get_cropable(self.centroids, img.shape)
@@ -512,9 +515,10 @@ class VolumeDataset(Dataset):
 
 """
 _______________________________________________________________________________________________________________________
-Tests for the TwoSliceDataset and DataModule 
+Tests 
 _______________________________________________________________________________________________________________________
 """
+#TODO : move tests to separate file
 
 
 def check_probmap_module():
@@ -585,7 +589,8 @@ def check_data_type():
     print(label.dtype)
 
 
-def check_examples():
+def check_examples2d():
+    pl.seed_everything(222)
     data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
     side = 15
 
@@ -628,5 +633,51 @@ def check_examples():
     plt.show()
 
 
+def check_examples3d():
+    pl.seed_everything(222)
+    data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+    side = 15
+
+    roi_id = "1-1VWT"
+    npz_filename = os.path.join(data_dir, roi_id, "ROI_1-1VWT.npz")
+    csv_filename = os.path.join(data_dir, roi_id, "ROI_1-1VWT_synaptic_only.csv")
+    img_filename = os.path.join(data_dir, roi_id, "Fish1_Nacre-like_47_LED_TP1-Done.ome.tiff")
+
+    centroids = load_centroids(npz_filename)
+    labels = load_labels(npz_filename, csv_filename)
+    centroids, labels = drop_unsegmented(centroids, labels, x_max=500, z_max=90)
+    img = load_image(img_filename)
+
+    dataset = VolumeDataset(img, side, centroids, labels=labels)
+    print(f"Examples: {dataset.examples_idx}")
+
+    img, label = dataset[dataset.examples_idx]
+    print(img.shape)
+    print(label)
+
+    # dataloader returns the nicer order of BxCxHxW
+    dataloader = DataLoader(Subset(dataset, dataset.examples_idx), batch_size=6)
+    img, label = next(iter(dataloader))
+    print(img.shape)
+    print(label)
+
+    img1 = img[:, :, 7, :, :]
+    img2 = img[:, :, :, :, 7]
+    imgs = torch.cat((img1, img2), dim=2)
+    print(imgs.shape)
+
+    fig = plt.figure(figsize=(6., 3.))
+    grid = ImageGrid(fig, 111,  # similar to subplot(111)
+                     nrows_ncols=(1, 6),  # creates 2x2 grid of axes
+                     axes_pad=0.1,  # pad between axes in inch.
+                     share_all=True)
+
+    for i_cell, ax in enumerate(grid):
+        # Iterating over the grid returns the Axes.
+        ax.imshow(torch.squeeze(imgs[i_cell]))
+        ax.set_title(f"Label\n{label[i_cell]}")
+    plt.show()
+
+
 if __name__ == "__main__":
-    check_probmap_module()
+    check_examples2d()

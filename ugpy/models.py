@@ -1,7 +1,7 @@
 # PyTorch libraries
 import torch
 from torch import nn
-from torchsummary import summary
+from torchinfo import summary
 
 
 def conv2d_module(in_channels, out_channels, kernel_size, stride=1, padding=0, batch_norm=True):
@@ -133,12 +133,17 @@ class Conv3d(nn.Module):
         :return: value at the final node, without sigmoid applied
         :rtype: tensor
         """
+        print(x.shape)
         x = self.cnns(x)
-        flattened = torch.flatten(x)
-        # before squeeze it is (Batch x 1) , but need to match labels (Batch)
-        # z = torch.squeeze(self.fc(flattened))
+        print(x.shape)
+        flattened = torch.flatten(x, start_dim=1)
+        print(flattened.shape)
+        # # before squeeze it is (Batch x 1) , but need to match labels (Batch)
+        x = torch.squeeze(self.fc(flattened))
         return x
 
 if __name__ == "__main__":
     # CDHW
-    summary(Conv3d(), (1, 15, 15, 15))
+    model = Conv3d()
+    batch_size = 16
+    summary(model, input_size=(batch_size, 1, 15, 15, 15))
