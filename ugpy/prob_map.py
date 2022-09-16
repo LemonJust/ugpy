@@ -11,10 +11,25 @@ import torch
 import wandb
 
 from classifier import ImClassifier
-from datasets import TwoSlicesProbMapModule
+from datasets import CropProbMapModule
 from preprocess import split_to_rois, Image
 from loader import load_image
 
+
+def predict(config, model, data_module):
+    if config["input_type"] == "two slices":
+        img1 = torch.permute(data_module.pred_dataset[:][0], (1, 0, 2, 3)).to('cuda')
+        img2 = torch.permute(data_module.pred_dataset[:][1], (1, 0, 2, 3)).to('cuda')
+        prediction = torch.sigmoid(model((img1, img2)))
+        prediction = prediction.to("cpu").numpy()
+    elif config["input_type"] == "volume":
+        img = torch.permute(data_module.pred_dataset[:], (1, 0, 2, 3, 4)).to('cuda')
+        prediction = torch.sigmoid(model(img))
+        prediction = prediction.to("cpu").numpy()
+    else:
+        raise ValueError(f"input_type can be 'two slices' or 'volume' only, but got "
+                         f"{config['input_type']}")
+    return prediction
 
 @njit
 def place_predictions_into_map(prob_map, centroids, prediction, scale):
@@ -61,12 +76,9 @@ def prob_map_with_logger():
             if i_roi in wandb.config["skip_rois"]:
                 print("Skipped")
             else:
-                data_module = TwoSlicesProbMapModule([roi], img, config=wandb.config)
+                data_module = CropProbMapModule([roi], img, config=wandb.config)
                 data_module.setup(stage='predict')
-                img1 = torch.permute(data_module.pred_dataset[:][0], (1, 0, 2, 3)).to('cuda')
-                img2 = torch.permute(data_module.pred_dataset[:][1], (1, 0, 2, 3)).to('cuda')
-                prediction = torch.sigmoid(model((img1, img2)))
-                prediction = prediction.to("cpu").numpy()
+                prediction = predict(wandb.config, model, data_module)
                 prob_map = place_predictions_into_map(prob_map,
                                                       data_module.pred_dataset.centroids,
                                                       prediction,
@@ -83,7 +95,7 @@ def prob_map_with_logger():
 
 
 if __name__ == "__main__":
-    config_file = "prob_map_config2.yaml"
+    config_file = "prob_map_config_crop.yaml"
 
     wandb_logger = WandbLogger(project="UGPy-SynapseClassifier",
                                job_type="prob_map",

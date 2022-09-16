@@ -37,7 +37,7 @@ class CropDataModule(pl.LightningDataModule):
         #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         # ])
 
-        self.transform = DataAugmentation()  # per batch augmentation_kornia
+        self.transform = DataAugmentation(config)  # per batch augmentation_kornia
 
         self.batch_size = config["batch_size"]
         self.num_workers = config["num_workers"]
@@ -162,6 +162,28 @@ class CropDataModule(pl.LightningDataModule):
             self.test_dataset = ConcatDataset(datasets)
             self.info.update({"num_train": len(self.test_dataset),
                               "frac1_test": total_pos_label_test / len(self.test_dataset)})
+
+    def show_batch(self, win_size=(10, 10)):
+        def _to_vis(imgs):
+            img1 = imgs[:, :, 7, :, :]
+            img2 = imgs[:, :, :, :, 7]
+            imgs_sliced = torch.cat((img1, img2), dim=2)
+            return imgs_sliced
+
+        # get a batch from the training set: try with `val_datlaoader` :)
+        imgs, labels = next(iter(self.train_dataloader()))
+        imgs_aug = self.transform(imgs)  # apply transforms
+        # use matplotlib to visualize
+        plt.figure(figsize=win_size)
+        plt.imshow(_to_vis(imgs))
+        plt.figure(figsize=win_size)
+        plt.imshow(_to_vis(imgs_aug))
+
+    def on_after_batch_transfer(self, batch, dataloader_idx):
+        x, y = batch
+        if self.trainer.training:
+            x = self.transform(x)  # => we perform GPU/Batched data augmentation
+        return x, y
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
