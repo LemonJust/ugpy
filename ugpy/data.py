@@ -1,3 +1,7 @@
+"""
+Core classes to del with my type of data
+"""
+
 import numpy as np
 from tifffile import TiffFile
 import tifffile as tif
@@ -278,6 +282,266 @@ class Image:
         y_size, x_size = page.shape
         stack.close()
         return (z_size, y_size, x_size)
+
+
+class Points:
+    """ Points class represents and manipulates xyz coords. """
+
+    def __init__(self, zyx_arr, units='pix', resolution=None, idx=None, info=None):
+        """ Create a new point at the origin
+        units : in what units the zyx_arr coordinates are given. Can be 'pix' or 'phs'
+        for pixels or physical units respectively.
+        info : dictionary with lists or numpy arrays, specifying property per point.
+        """
+
+        if resolution is None:
+            resolution = [1, 1, 1]
+        self.resolution = np.array(resolution)
+
+        self.zyx = {}
+        if units == 'pix':
+            self.zyx['pix'] = np.array(zyx_arr)
+            self.zyx['phs'] = self.zyx['pix'] * self.resolution
+        elif units == 'phs':
+            self.zyx['phs'] = np.array(zyx_arr)
+            self.zyx['pix'] = np.round(self.zyx['phs'] / self.resolution)
+
+            # personal id for each point
+        self.num_points = self.zyx['pix'].shape[0]
+        if idx is None:
+            self.idx = np.arange(self.num_points)
+        else:
+            self.idx = np.array(idx)
+
+        self.info = info
+
+    def __repr__(self):
+        return f'Number of points : {self.num_points}\nResolution : {self.resolution}\nCoordinates' \
+               f' :\n- pixels\n{self.zyx["pix"]}\n- physical units\n{self.zyx["phs"]}'
+
+    @classmethod
+    def from_dict(cls, d):
+        """
+        Load Points object from a dictionary.
+        TODO : maybe you want to save and load both pix and phs units ... using phs only for now
+        """
+        # info might be missing
+        if 'info' in d:
+            info = d['info']
+        else:
+            info = None
+
+        points = cls(d['zyx'], units='phs', resolution=d['resolution'], idx=d['idx'], info=info)
+        return points
+
+    @classmethod
+    def from_json(cls, filename):
+        """
+        Load Points object from json file.
+        TODO : maybe you want to save and load both pix and phs units ... using phs only for now
+        """
+        # create an object for the class to return
+        with open(filename) as json_file:
+            j = json.load(json_file)
+        points = cls.from_dict(j)
+        return points
+
+    @classmethod
+    def from_predictions(cls, filename, prob_thr=0.5, resolution=[1, 1, 1], units='pix'):
+        df = pd.read_csv(filename)
+        points = cls(df[['Z', 'Y', 'X']][df["prob"] > prob_thr].to_numpy(),
+                     units=units, resolution=resolution)
+        return points
+
+    def to_dict(self):
+        """
+        Transform Points object into json format and save as a file.
+        """
+
+        d = {"resolution": self.resolution.tolist(),
+             "zyx": self.zyx['phs'].tolist(),
+             "idx": self.idx.tolist()}
+
+        if self.info is not None:
+            d["info"] = {key: self.info[key].tolist() for key in self.info}
+
+        return d
+
+    def to_json(self, filename):
+        """
+        Transform Points object into json format and save as a file.
+        """
+        j = json.dumps(self.to_dict())
+
+        with open(filename, 'w') as json_file:
+            json_file.write(j)
+
+    def crop(self, mask, units='pix'):
+        """
+        Crops a point cloud: drops everything outside a rectangle mask (in pixels or physical units)
+        and remembers the parameters of the crop.
+        mask : dict with xmin, xmax, ymin, ymax, zmin, zmax optional ( fields can be empty if don't need to crop there).
+
+        """
+        # calculate the crop
+        is_in = np.ones(self.num_points, dtype=bool)
+
+        for ikey, key in enumerate(['zmin', 'ymin', 'xmin']):
+            if key in mask and mask[key] is not None:
+                is_in = np.logical_and(is_in,
+                                       mask[key] < self.zyx[units][:, ikey])
+        for ikey, key in enumerate(['zmax', 'ymax', 'xmax']):
+            if key in mask and mask[key] is not None:
+                is_in = np.logical_and(is_in,
+                                       self.zyx[units][:, ikey] < mask[key])
+        # apply crop
+        zyx = self.zyx[units][is_in, :]
+        idx = self.idx[is_in]
+        if self.info is not None:
+            info = {key: np.array(self.info[key])[is_in] for key in self.info}
+
+        points = Points(zyx, units=units, resolution=self.resolution, idx=idx, info=info)
+        return points
+
+    def recenter(self, center, units='pix'):
+        """
+        Sets the zero to center ( array of 3 elements in zyx order ).
+        Center needs to be in pixels or the same physical units as the pointcloud.
+        """
+        center = np.array(center)
+        zyx = self.zyx[units] - center
+
+        points = Points(zyx, units=units, resolution=self.resolution, idx=self.idx)
+        return points
+
+    def transform(self, transform, units='phs'):
+        """
+        Applies transform to points in given units , default to physical.
+        transform : AffineTransform, a matrix and a center representing an affine transform in 3D.
+        In such format, that to apply transform matrix to a set of zyx1 points : zyx1@transform.matrix .
+
+        Returns Points with the same type of dta as the original, but coordinates transformed.
+        """
+
+        def to_zyx1(zyx_arr):
+            n_points = zyx_arr.shape[0]
+            ones = np.ones(n_points)
+            return np.c_[zyx_arr, ones[:, np.newaxis]]
+
+        zyx = self.zyx[units] - transform.center
+        zyx1 = to_zyx1(zyx)
+        transformed_zyx1 = zyx1 @ transform.matrix
+        transformed_zyx = transformed_zyx1[:, 0:3] + transform.center
+
+        points = Points(transformed_zyx, units=units, resolution=self.resolution, idx=self.idx, info=self.info)
+        return points
+
+    def fit_block(self, blc, padding=[0, 0, 0]):
+        """
+        Takes a ptc and crops it to block.
+        padding : in pixels (in the pixel space of the block)
+        """
+        # get mask in physical units :
+        start = (blc.start - padding) * blc.img.resolution
+        end = (blc.start + blc.size + padding) * blc.img.resolution
+        mask = {'zmin': start[0], 'zmax': end[0],
+                'ymin': start[1], 'ymax': end[1],
+                'xmin': start[2], 'xmax': end[2]}
+
+        return self.crop(mask, units='phs')
+
+    def fit_transform(self, af, padding=[0, 0, 0]):
+        """
+        Takes a ptc and crops it to the area on which affine transform was calculated.
+        padding : in physical units? in zyx order
+        Assumes the transform is in physical units.
+        """
+        # TODO : maybe make transform carry the UNITS
+        # TODO : make transform carry FIXED info ... now works ONLY because fixed and moving are the same
+
+        # get mask in physical units :
+        start = af.center - padding
+        end = af.center + af.size + padding
+        mask = {'zmin': start[0], 'zmax': end[0],
+                'ymin': start[1], 'ymax': end[1],
+                'xmin': start[2], 'xmax': end[2]}
+
+        return self.crop(mask, units='phs')
+
+    def split(self, blocks, padding=[0, 0, 0]):
+        """ Splits points into Blocks
+        Creates a points list in the order, that corresponds to the given blocks list.
+        """
+        points = []
+        for block in blocks:
+            points.append(self.fit_block(block, padding))
+        return points
+
+    @classmethod
+    def concat(cls, ptc_list):
+        """
+        combines point clouds in ptc_list into one, concatenating the coordinates and idx.
+        all point clouds need to have the same resolution.
+        padding : zyx padding in pixels or phs
+        """
+
+        resolution = ptc_list[0].resolution
+        zyx = None
+        idx = None
+
+        for i_ptc, ptc in enumerate(ptc_list):
+            if i_ptc == 0:
+                zyx = ptc.zyx['phs']
+                idx = ptc.idx
+            else:
+                assert np.all(resolution == ptc.resolution), "Resolution should be the same for all point clouds"
+                zyx = np.r_[zyx, ptc.zyx['phs']]
+                idx = np.r_[idx, ptc.idx]
+
+        # TODO : add info as well
+        points = cls(zyx, units='phs', resolution=resolution, idx=idx)
+        return points
+
+    def pw_transform(self, transfom_list):
+        # TODO : remake AffineTransforms to have info about the fixed as well as the moving
+        """
+        Piece-wise transforms the ptc according to each block alignment.
+        Creates a points list in the order, that corresponds to the given transfom list.
+        Each ptc in the list contains all the points, but transformed according to the different alignments.
+        """
+        points = []
+        for af in transfom_list:
+            # transform already takes the top left corner into account (center)
+            ptc = self.transform(af, units='phs')
+            points.append(ptc)
+
+        return points
+
+    def filter_by_info(self, feature, filter, units='phs'):
+        """
+        Applies threshold on the specified info.
+        filter: 'max' and 'min' values to keep.
+        feature: what info to use
+        """
+        assert self.info is not None, "Can't filter by info : info is None"
+
+        is_in = np.ones((self.num_points,)).astype(np.bool)
+        if 'max' in filter:
+            is_in = np.logical_and(is_in, (np.array(self.info[feature]) <= filter['max']))
+        if 'min' in filter:
+            is_in = np.logical_and(is_in, (np.array(self.info[feature]) >= filter['min']))
+
+        zyx = self.zyx[units][is_in, :]
+        idx = self.idx[is_in]
+        info = {key: np.array(self.info[key])[is_in] for key in self.info}
+
+        return Points(zyx, units=units, resolution=self.resolution, idx=idx, info=info)
+
+    def reset_idx(self):
+        """
+        Creates new set of idx.
+        """
+        self.idx = np.arange(self.num_points)
 
 
 def roi_to_centroids(rois):

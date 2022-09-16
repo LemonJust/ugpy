@@ -19,7 +19,7 @@ from classifier import ImClassifier
 
 from datasets import TwoSlicesDataModule, TwoSlicesProbMapModule
 from models import TwoBranchConv2d
-from preprocess import split_to_rois, get_image_shape, Image
+from data import split_to_rois, get_image_shape, Image
 from loader import load_image
 
 
@@ -138,7 +138,7 @@ from classifier import ImClassifier
 
 from datasets import TwoSlicesDataModule, TwoSlicesProbMapModule
 from models import TwoBranchConv2d
-from preprocess import split_to_rois, get_image_shape, Image
+from data import split_to_rois, get_image_shape, Image
 from loader import load_image
 
 

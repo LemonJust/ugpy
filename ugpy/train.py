@@ -12,6 +12,12 @@ from datasets import CropDataModule
 from classifier import ImClassifier
 
 
+"""
+Classification + localisation 
+https://blog.paperspace.com/object-localization-pytorch-2/
+"""
+
+
 def train_and_test_with_logger(wandb_logger):
 
     # sets seeds for numpy, torch, python.random and PYTHONHASHSEED.

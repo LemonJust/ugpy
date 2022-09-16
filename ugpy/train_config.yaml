@@ -2,15 +2,15 @@
 # Model
 # ---------------------------------------------------------------------------- #
 model:
-  value: Conv3d
+  value: SuperTinyFC
 input_type:
   value: volume
 input_shape:
-  value: 15x15x15
+  value: 5,5,5
 input_crop:
   value: zyx
 crop_side:
-  value: 15
+  value: 5
 
 loss:
   value: BCEWithLogitsLoss
@@ -39,6 +39,8 @@ normalization:
   value: standardise by fish
 drop_unsegmented:
   value: all
+augmentation:
+  value: True
 
 data_train:
   value:

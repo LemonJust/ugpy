@@ -12,7 +12,7 @@ import wandb
 
 from classifier import ImClassifier
 from datasets import CropProbMapModule
-from preprocess import split_to_rois, Image
+from data import split_to_rois, Image
 from loader import load_image
 
 

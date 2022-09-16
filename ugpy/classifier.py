@@ -6,7 +6,7 @@ from torch import nn
 from torchmetrics import MetricCollection, F1Score, Precision, Recall, MeanMetric, Metric
 
 from pytorch_lightning import LightningModule
-from models import TwoBranchConv2d, Conv3d
+from models import TwoBranchConv2d, Conv3d, TinyConv3d, SuperTinyConv3d, SuperTinyFC
 
 
 class ImClassifier(LightningModule):
@@ -47,13 +47,21 @@ class ImClassifier(LightningModule):
         self.configure_metrics()
 
     def configure_model(self):
+
         if self.config["model"] == "TwoBranchConv2d":
             self.model = TwoBranchConv2d()
         elif self.config["model"] == "Conv3d":
             self.model = Conv3d()
+        elif self.config["model"] == "TinyConv3d":
+            self.model = TinyConv3d()
+        elif self.config["model"] == "SuperTinyConv3d":
+            self.model = SuperTinyConv3d()
+        elif self.config["model"] == "SuperTinyFC":
+            self.model = SuperTinyFC()
         else:
             # add to the list of available names if you implement another one
-            raise ValueError('config["model"] can be only "TwoBranchConv2d" or "Conv3d"')
+            raise ValueError('config["model"] can only be one these:'
+                             ' "TwoBranchConv2d","Conv3d","TinyConv3d","SuperTinyConv3d","SuperTinyFC" ')
 
     def configure_criterion(self):
 

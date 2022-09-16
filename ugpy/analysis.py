@@ -3,7 +3,7 @@ Analysis of the probability maps and other things
 """
 
 import numpy as np
-from preprocess import Image
+from data import Image
 from dipy.align.reslice import affine_transform
 
 

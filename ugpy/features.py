@@ -8,7 +8,6 @@ import numpy as np
 from scipy.spatial import cKDTree
 import matplotlib.pyplot as plt
 
-from ugpy.preprocess import Image
 
 
 # let's estimate the size of the synapse

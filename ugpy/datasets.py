@@ -9,7 +9,7 @@ import pytorch_lightning as pl
 
 # local imports
 from loader import load_data, load_image
-from preprocess import Slices, Volumes, roi_to_centroids, split_to_rois
+from data import Slices, Volumes, roi_to_centroids, split_to_rois
 from loader import load_centroids, load_labels, load_image, drop_unsegmented
 from splitter import train_test_split
 from augmentation import DataAugmentation
@@ -37,6 +37,8 @@ class CropDataModule(pl.LightningDataModule):
         #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         # ])
 
+        # whether to apply augmentation
+        self.augment = config["augmentation"]
         self.transform = DataAugmentation(config)  # per batch augmentation_kornia
 
         self.batch_size = config["batch_size"]
@@ -181,7 +183,8 @@ class CropDataModule(pl.LightningDataModule):
 
     def on_after_batch_transfer(self, batch, dataloader_idx):
         x, y = batch
-        if self.trainer.training:
+
+        if self.trainer.training and self.augment:
             x = self.transform(x)  # => we perform GPU/Batched data augmentation
         return x, y
 
