@@ -6,7 +6,11 @@ ugpy/scratch_code/
 
 ugpy/wandb/
 
-ugpy/__pycache__/
+ugpy/utils/__pycache__/
+
+ugpy/classification/__pycache__/
+
+ugpy/localization/__pycache__/
 
 .idea/
 
@@ -21,3 +25,12 @@ manual/.ipynb_checkpoints/
 manual/__pycache__/
 
 tmp/
+
+ugpy/utils/wandb/
+
+ugpy/classification/wandb/
+
+ugpy/localization/wandb/
+
+
+ugpy/__pycache__/

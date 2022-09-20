@@ -1,6 +1,6 @@
 import numpy as np
 import unittest
-from ugpy.features import DistnceBS
+from ugpy.utils.features import DistnceBS
 
 
 # from ugpy.loader import load_centroids, load_labels

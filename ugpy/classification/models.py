@@ -228,6 +228,34 @@ class SuperTinyFC(nn.Module):
         return z
 
 
+class TinyConv3d_Localization(Conv3d):
+    """
+    Model with 3D input
+    Expects input 7x7x7 pixels
+    """
+
+    def __init__(self, do_batch_norm=False):
+        super(TinyConv3d_Localization, self).__init__()
+
+        self.cnns = self.cnn_branch(do_batch_norm=do_batch_norm)
+
+    @staticmethod
+    def cnn_branch(do_batch_norm=False):
+        """
+        Padding is actually important:
+        https://stats.stackexchange.com/questions/246512/convolutional-layers-to-pad-or-not-to-pad
+        https://cs231n.github.io/convolutional-networks/
+        """
+        conv = nn.Sequential(
+            conv3d_module(1, 4, 3, stride=1, padding=1, batch_norm=do_batch_norm),
+            conv3d_module(4, 4, 3, stride=1, padding=1, batch_norm=do_batch_norm),
+            nn.MaxPool3d(2),
+            conv3d_module(4, 8, 3, stride=1, padding=1, batch_norm=do_batch_norm),
+            conv3d_module(8, 8, 3, stride=1, padding=0, batch_norm=do_batch_norm)
+        )
+        return conv
+
+
 
 if __name__ == "__main__":
     # CDHW

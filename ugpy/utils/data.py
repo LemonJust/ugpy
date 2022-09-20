@@ -544,6 +544,33 @@ class Points:
         self.idx = np.arange(self.num_points)
 
 
+def prepare_shift(shift_by, shift_labels):
+    """
+    Turns shift_by and shift_labels from config into lists for VolumeDataset.add_shifted_positive_examples()
+    :param shift_by:
+    :type shift_by:
+    :param shift_labels:
+    :type shift_labels:
+    :return: dict with shift_list, shift_label_list
+    :rtype: dict
+    """
+    # TODO : probably do something smarter in the future.
+    #  For example check that there are no synapses at these locations or too close ?
+    shift_list = []
+    shift_label_list = []
+    for shift, label in zip(shift_by, shift_labels):
+        shift_list.append([shift, 0, 0])
+        shift_list.append([-shift, 0, 0])
+        shift_list.append([0, shift, 0])
+        shift_list.append([0, -shift, 0])
+        shift_list.append([0, 0, shift])
+        shift_list.append([0, 0, -shift])
+
+        shift_label_list.extend([label] * 6)
+
+    return {'shifts': shift_list, 'labels': shift_label_list}
+
+
 def roi_to_centroids(rois):
     """
     creates a centroid for every pixel in the rois
@@ -622,7 +649,7 @@ def split_to_rois(img_file, zyx_chunks, zyx_padding):
 
 def test_numba():
     from loader import load_centroids, load_labels, load_image, drop_unsegmented
-    from datasets import TwoSlicesDataset
+    from ugpy.classification.datasets import TwoSlicesDataset
     import os
     import matplotlib.pyplot as plt
     from mpl_toolkits.axes_grid1 import ImageGrid
@@ -657,7 +684,7 @@ def test_numba():
         fig.suptitle(main_title)
         plt.show()
 
-    data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+    data_dir = r"/data/test/gad1b"
     side = 15
 
     roi_id = "1-1VWT"

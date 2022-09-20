@@ -2,15 +2,15 @@
 # Model
 # ---------------------------------------------------------------------------- #
 model:
-  value: Conv3d
+  value: TinyConv3d
 input_type:
   value: volume
 input_shape:
-  value: 15x15x15
+  value: 7,7,7
 input_slices:
   value: zyx
 crop_side:
-  value: 15
+  value: 7
 
 loss:
   value: BCEWithLogitsLoss
@@ -27,9 +27,9 @@ optimizer_lr:
 # ---------------------------------------------------------------------------- #:
 
 checkpoint_dir:
-  value: D:/Code/repos/UGPy/ugpy/wandb
+  value: D:/Code/repos/UGPy/ugpy/classification/wandb
 checkpoint_run_id:
-  value: lqbi6r9a
+  value: 1ibq4uut
 
 # ---------------------------------------------------------------------------- #
 # Data

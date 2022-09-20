@@ -1,8 +1,6 @@
 """
 Structure from https://github.com/Lightning-AI/lightning/issues/9252
 """
-import glob
-import os
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -81,7 +79,7 @@ Helper Functions _______________________________________________________________
 
 
 def plot_histogram_of_distance_to_nn(roi_id):
-    data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+    data_dir = r"/data/test/gad1b"
     _, npz_file, csv_file = get_filenames(data_dir, roi_id)
 
     centroids = load_centroids(npz_file)
@@ -95,7 +93,7 @@ def plot_histogram_of_distance_to_nn(roi_id):
 
 
 if __name__ == "__main__":
-    from ugpy.loader import load_centroids, load_labels, get_filenames
+    from ugpy.utils.loader import load_centroids, load_labels, get_filenames
 
     roi_id = "1-1WHA"
     plot_histogram_of_distance_to_nn(roi_id)

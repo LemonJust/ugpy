@@ -7,20 +7,12 @@ import glob
 import os
 
 import numpy as np
-import torch
-from torch import nn
 
 import pytorch_lightning as pl
-from pytorch_lightning.loggers import WandbLogger
 
 import wandb
 
-from classifier import ImClassifier
-
-from datasets import TwoSlicesDataModule, TwoSlicesProbMapModule
 from models import TwoBranchConv2d
-from data import split_to_rois, get_image_shape, Image
-from loader import load_image
 
 
 def prob_map_with_logger(wandb_logger):
@@ -134,7 +126,7 @@ from pytorch_lightning.loggers import WandbLogger
 
 import wandb
 
-from classifier import ImClassifier
+from ugpy.classification.classifier import ImClassifier
 
 from datasets import TwoSlicesDataModule, TwoSlicesProbMapModule
 from models import TwoBranchConv2d

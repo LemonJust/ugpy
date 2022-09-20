@@ -12,7 +12,7 @@ import shutil
 import scipy.ndimage as nd
 import os
 from pathlib import Path
-from synspy.analyze.util import load_segment_status_from_csv
+from ugpy.synspy.analyze.util import load_segment_status_from_csv
 
 
 def _centroids_from_npz(npz_filename):

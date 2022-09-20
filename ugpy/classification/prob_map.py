@@ -10,10 +10,10 @@ from pytorch_lightning.loggers import WandbLogger
 import torch
 import wandb
 
-from classifier import ImClassifier
-from datasets import CropProbMapModule
-from data import split_to_rois, Image
-from loader import load_image
+from ugpy.classification.classifier import ImClassifier
+from ugpy.classification.datasets import CropProbMapModule
+from ugpy.utils.data import split_to_rois, Image
+from ugpy.utils.loader import load_image
 
 
 def predict(config, model, data_module):
@@ -95,9 +95,9 @@ def prob_map_with_logger():
 
 
 if __name__ == "__main__":
-    config_file = "prob_map_config_crop.yaml"
+    config_file = "../configs/prob_map_config_crop.yaml"
 
-    wandb_logger = WandbLogger(project="UGPy-SynapseClassifier",
+    wandb_logger = WandbLogger(project="UGPy-SynapseClassifier-ProbMap",
                                job_type="prob_map",
                                config=config_file)
     prob_map_with_logger()

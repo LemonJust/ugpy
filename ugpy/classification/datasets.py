@@ -8,11 +8,11 @@ from mpl_toolkits.axes_grid1 import ImageGrid
 import pytorch_lightning as pl
 
 # local imports
-from loader import load_data, load_image
-from data import Slices, Volumes, roi_to_centroids, split_to_rois
-from loader import load_centroids, load_labels, load_image, drop_unsegmented
-from splitter import train_test_split
-from augmentation import DataAugmentation
+from ugpy.utils.loader import load_data, load_image
+from ugpy.utils.data import Slices, Volumes, roi_to_centroids, split_to_rois, prepare_shift
+from ugpy.utils.loader import load_centroids, load_labels, load_image, drop_unsegmented
+from ugpy.utils.splitter import train_test_split
+from ugpy.classification.augmentation import DataAugmentation
 
 # TODO : rewrite stuff from os.join to Path
 import os
@@ -56,7 +56,11 @@ class CropDataModule(pl.LightningDataModule):
         if self.config["input_type"] == "two slices":
             dataset = TwoSlicesDataset(image, side, centroids, labels=labels)
         elif self.config["input_type"] == "volume":
-            dataset = VolumeDataset(image, side, centroids, labels=labels)
+            shift = None
+            if self.config["add_shifted"]:
+                shift = prepare_shift(self.config["shift_by"], self.config["shift_labels"])
+            dataset = VolumeDataset(image, side, centroids, labels=labels, shift=shift)
+
         else:
             raise ValueError(f"input_type can be 'two slices' or 'volume' only, but got {self.config['input_type']}")
 
@@ -76,7 +80,7 @@ class CropDataModule(pl.LightningDataModule):
         In my case I will create a full dataset here.
         """
 
-        self.data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+        self.data_dir = r"D:/code/repos/ugpy/data/test/gad1b"
 
         self.training_roi_ids = self.config['data_train']
         self.validation_roi_ids = self.config['data_valid']
@@ -416,7 +420,7 @@ class VolumeDataset(Dataset):
     # TODO : so what type should I use ?!?!
     label_dtype = torch.float32
 
-    def __init__(self, img, side, centroids, labels=None, numba=True):
+    def __init__(self, img, side, centroids, labels=None, numba=True, shift=None):
         """
         Creates a dataset that keeps volumes of size side x side x side for all the centroids,
          cropped  from the img at zyx orientation.
@@ -429,6 +433,10 @@ class VolumeDataset(Dataset):
         :type centroids: numpy array
         :param labels: binary labels for each centroid
         :type labels: numpy array or list
+        :param shift: dictionary with shift_list and shift_labels or None
+        :type shift: dict
+        :param numba: whether to use numba
+        :type numba: bool
         """
         print(f"Creating dataset")
         self.numba = numba
@@ -439,12 +447,21 @@ class VolumeDataset(Dataset):
         self.centroids = centroids
 
         if labels is not None:
-            self.examples_idx = torch.as_tensor(self.get_examples(labels), dtype=torch.long)
-            self.frac1 = np.sum(labels) / len(labels)
             self.labels = torch.as_tensor(labels, dtype=self.label_dtype)
+            self.synapse_centroids = centroids[labels]
+
+            # record the fraction of synapses to not
+            self.frac1 = np.sum(labels) / len(labels)
+            # pick examples of synapses and not
+            self.examples_idx = torch.as_tensor(self.get_examples(labels), dtype=torch.long)
         else:
             self.labels = None
+            self.synapse_centroids = None
 
+        if shift is not None:
+            self._add_shifted_positive_examples(shift['shifts'], shift['labels'])
+
+        self.side = side
         self.imgs = self.get_volumes(img, side)
 
     @staticmethod
@@ -458,7 +475,10 @@ class VolumeDataset(Dataset):
                                    replace=False)
         return np.concatenate((label_1, label_0), axis=0)
 
-    def get_volumes(self, img, side):
+    def _prepare_cropper(self, img, side):
+        """
+        Initialise cropper and get rid of any uncroppable centroids and labels.
+        """
 
         # initialise slicer objects to make crops
         cropper = Volumes([side, side, side])
@@ -475,6 +495,13 @@ class VolumeDataset(Dataset):
             if self.labels is not None:
                 self.labels = self.labels[cropable]
                 warnings.warn(f"Dropped {np.sum(~cropable)} uncropable labels")
+
+        return cropper
+
+    def get_volumes(self, img, side):
+
+        # initialise slicer objects to make crops
+        cropper = self._prepare_cropper(img, side)
 
         # crop
         if self.numba:
@@ -499,6 +526,37 @@ class VolumeDataset(Dataset):
         """
         data = (data - self.mean) / self.std
         return data
+
+    def _add_shifted_positive_examples(self, shift_list, shift_labels):
+        """
+        Adds more synapse examples into the centroids
+        by translating the centers according to each element in translation_list
+
+        :param shift_list: how much to move centroids in zyx , Mx3 :[[dz0,dy0,dx0],[dz1,dy1,dx1], ...]
+        dz dy dx can be positive or negative
+        :type shift_list: list
+        :param shift_labels: how to label shifted synapses - as synapses or not.
+        You can provide label for each shift or if int, the same label is used for all shifts. ,
+        for example: [1,0, ...] ( for first shift - synapse, for the second - not a synapse.
+        :type shift_labels: Union(list, int)
+        :return: None
+        """
+
+        # prepare labels
+        if isinstance(shift_labels, int):
+            shift_labels = [shift_labels] * len(shift_list)
+
+        synapse_centroids = self.synapse_centroids
+        n_syn = len(synapse_centroids)
+        for label, shift in zip(shift_labels, shift_list):
+            # move centroids according to the translation list,
+            # add to the centroids and labels
+            shifted = synapse_centroids + shift
+            self.centroids = np.append(self.centroids, shifted, axis=0)
+            self.labels = torch.cat([self.labels, torch.tensor([label] * n_syn, dtype=self.label_dtype)], dim=0)
+            # add shifted centroids to synapse_centroids if the label is "1"
+            if label:
+                self.synapse_centroids = np.append(self.synapse_centroids, shifted, axis=0)
 
     @classmethod
     def from_rois(cls, img, side, rois):
@@ -543,7 +601,9 @@ ________________________________________________________________________________
 Tests 
 _______________________________________________________________________________________________________________________
 """
-#TODO : move tests to separate file
+
+
+# TODO : move tests to separate file
 
 
 def check_probmap_module():
@@ -561,7 +621,7 @@ def check_probmap_module():
 
 
 def check_combo_dataset():
-    data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+    data_dir = r"/data/test/gad1b"
     side = 15
 
     roi_id = "1-1VWT"
@@ -585,7 +645,7 @@ def check_combo_dataset():
 
 
 def check_data_type():
-    data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+    data_dir = r"/data/test/gad1b"
     side = 15
 
     roi_id = "1-1VWT"
@@ -616,7 +676,7 @@ def check_data_type():
 
 def check_examples2d():
     pl.seed_everything(222)
-    data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+    data_dir = r"/data/test/gad1b"
     side = 15
 
     roi_id = "1-1VWT"
@@ -660,7 +720,7 @@ def check_examples2d():
 
 def check_examples3d():
     pl.seed_everything(222)
-    data_dir = r"D:\Code\repos\UGPy\data\test\gad1b"
+    data_dir = r"/data/test/gad1b"
     side = 15
 
     roi_id = "1-1VWT"
