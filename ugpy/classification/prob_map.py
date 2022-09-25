@@ -95,9 +95,21 @@ def prob_map_with_logger():
 
 
 if __name__ == "__main__":
-    config_file = "../configs/prob_map_config_crop.yaml"
+    # config_file = "../configs/prob_map_config_crop.yaml"
+    #
+    # wandb_logger = WandbLogger(project="UGPy-SynapseClassifier-ProbMap",
+    #                            job_type="prob_map",
+    #                            config=config_file)
+    # prob_map_with_logger()
 
-    wandb_logger = WandbLogger(project="UGPy-SynapseClassifier-ProbMap",
-                               job_type="prob_map",
-                               config=config_file)
-    prob_map_with_logger()
+    config_path = "../configs/crop_configs_3D_CNN"
+    config_list = os.listdir(config_path)
+    for config in config_list:
+        config_file = f"{config_path}/{config}"
+        wandb_logger = WandbLogger(project="UGPy-SynapseClassifier-ProbMap",
+                                   job_type="prob_map",
+                                   config=config_file)
+        prob_map_with_logger()
+
+
+

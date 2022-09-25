@@ -47,7 +47,7 @@ class TwoBranchConv2d(nn.Module):
     https://stackoverflow.com/questions/66786787/pytorch-multiple-branches-of-a-model
     """
 
-    def __init__(self, do_batch_norm=False):
+    def __init__(self, do_batch_norm=False, pos_weight=1):
         super(TwoBranchConv2d, self).__init__()
 
         self.cnns = nn.ModuleList([self.cnn_branch(do_batch_norm=do_batch_norm),
@@ -62,6 +62,11 @@ class TwoBranchConv2d(nn.Module):
             # skipping sigmoid layer because during the training wea are using nn.BCEWithLogitsLoss ,
             # which combines nn.Sigmoid and nn.BCELoss
         )
+
+        # THIS LOSS is never used anymore , but keeping it here so that the old saved model works!
+        # ( also keeping , pos_weight=1 for the same reason )
+        # adding the loss to the model, since it's important to use this one when having to sigmoid ...
+        self.loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
 
     @staticmethod
     def cnn_branch(do_batch_norm=False):
@@ -99,7 +104,7 @@ class Conv3d(nn.Module):
     https://stackoverflow.com/questions/66786787/pytorch-multiple-branches-of-a-model
     """
 
-    def __init__(self, do_batch_norm=False):
+    def __init__(self, do_batch_norm=False, pos_weight=1):
         super(Conv3d, self).__init__()
 
         self.cnns = self.cnn_branch(do_batch_norm=do_batch_norm)
@@ -113,6 +118,11 @@ class Conv3d(nn.Module):
             # skipping sigmoid layer because during the training wea are using nn.BCEWithLogitsLoss ,
             # which combines nn.Sigmoid and nn.BCELoss
         )
+
+        # THIS LOSS is never used anymore , but keeping it here so that the old saved model works!
+        # ( also keeping , pos_weight=1 for the same reason )
+        # adding the loss to the model, since it's important to use this one when having to sigmoid ...
+        self.loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
 
     @staticmethod
     def cnn_branch(do_batch_norm=False):
